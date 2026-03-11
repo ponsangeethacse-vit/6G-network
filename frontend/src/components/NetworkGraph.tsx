@@ -116,13 +116,13 @@ const NetworkGraph = ({ nodes }: { nodes: NodeData[] }) => {
       </Canvas>
       <div className="absolute bottom-4 left-4 glass-card p-3 rounded-lg text-xs space-y-1 border-trust-accent/20">
           <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-trust-high" /> <span>High Trust (>0.7)</span>
+              <div className="w-3 h-3 rounded-full bg-trust-high" /> <span>High Trust ({'>'}0.7)</span>
           </div>
           <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full bg-trust-mid" /> <span>Medium Trust (0.3 - 0.7)</span>
           </div>
           <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-trust-low" /> <span>Low Trust / Isolated (<0.3)</span>
+              <div className="w-3 h-3 rounded-full bg-trust-low" /> <span>Low Trust / Isolated ({'<'}0.3)</span>
           </div>
       </div>
     </div>
