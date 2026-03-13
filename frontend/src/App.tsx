@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { io, Socket } from 'socket.io-client';
+import { Container, Navbar, Button, Badge } from 'react-bootstrap';
 import TrustDashboard from './components/TrustDashboard';
 import { Shield, ShieldAlert, Activity } from 'lucide-react';
 
@@ -40,40 +41,41 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 font-sans">
-      <nav className="border-b border-slate-800 bg-slate-900/50 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-3">
-              <Shield className="w-8 h-8 text-blue-500" />
-              <span className="font-bold text-xl tracking-tight text-white">6G Trust Defender</span>
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 text-sm">
-                <span className="relative flex h-3 w-3">
-                  <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isConnected ? 'bg-green-400' : 'bg-red-400'}`}></span>
-                  <span className={`relative inline-flex rounded-full h-3 w-3 ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></span>
-                </span>
-                <span className="text-slate-400">{isConnected ? 'System Online' : 'Connecting...'}</span>
+    <div className="min-vh-100 bg-dark text-light font-sans" style={{ backgroundColor: '#0a0a0c' }}>
+      <Navbar bg="dark" variant="dark" expand="lg" sticky="top" className="border-bottom border-secondary mb-4" style={{ backgroundColor: 'rgba(33, 37, 41, 0.9)' }}>
+        <Container>
+          <Navbar.Brand href="#home" className="d-flex align-items-center gap-3">
+            <Shield className="text-primary" size={32} />
+            <span className="fw-bold fs-4 tracking-tight text-white">6G Trust Defender</span>
+          </Navbar.Brand>
+          
+          <Navbar.Collapse className="justify-content-end">
+            <div className="d-flex align-items-center gap-4">
+              <div className="d-flex align-items-center gap-2 text-sm">
+                <Badge bg={isConnected ? 'success' : 'danger'} pill className="p-2">
+                  {isConnected ? 'System Online' : 'Connecting...'}
+                </Badge>
               </div>
-              <button
+              <Button
+                variant={maliciousMode ? 'outline-danger' : 'outline-success'}
                 onClick={toggleMaliciousMode}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
-                  maliciousMode 
-                    ? 'bg-red-500/10 text-red-500 border border-red-500/50 hover:bg-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.3)]' 
-                    : 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/50 hover:bg-emerald-500/20'
-                }`}
+                className="d-flex align-items-center gap-2"
+                style={{
+                  boxShadow: maliciousMode ? '0 0 15px rgba(220, 53, 69, 0.3)' : 'none'
+                }}
               >
-                {maliciousMode ? <ShieldAlert className="w-4 h-4" /> : <Activity className="w-4 h-4" />}
+                {maliciousMode ? <ShieldAlert size={16} /> : <Activity size={16} />}
                 {maliciousMode ? 'Malicious Traffic: ON' : 'Normal Traffic'}
-              </button>
+              </Button>
             </div>
-          </div>
-        </div>
-      </nav>
+          </Navbar.Collapse>
+        </Container>
+      </Navbar>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {socket && <TrustDashboard socket={socket} socketUrl={SOCKET_SERVER_URL} />}
+      <main>
+        <Container fluid="lg" className="py-4">
+          {socket && <TrustDashboard socket={socket} socketUrl={SOCKET_SERVER_URL} />}
+        </Container>
       </main>
     </div>
   );

@@ -1,46 +1,47 @@
 import React from 'react';
 import { ShieldAlert, Info, Clock } from 'lucide-react';
 import { SecurityAlert } from '../types';
+import { Card, Badge } from 'react-bootstrap';
 
 const AttackAlerts = ({ alerts }: { alerts: SecurityAlert[] }) => {
   return (
-    <div className="glass-card p-6 rounded-xl h-[400px] flex flex-col">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2">
-            <ShieldAlert className="w-4 h-4 text-trust-low" /> Core Network Security Logs
-        </h3>
-        <span className="text-[10px] bg-red-500/10 text-red-500 px-2 py-0.5 rounded border border-red-500/20">LIVE</span>
-      </div>
+    <Card bg="dark" border="secondary" className="h-100 shadow-lg" style={{ minHeight: '400px' }}>
+      <Card.Header className="bg-black bg-opacity-25 border-bottom border-secondary p-3 d-flex align-items-center justify-content-between">
+        <h6 className="mb-0 text-secondary text-uppercase d-flex align-items-center gap-2" style={{ letterSpacing: '1px' }}>
+            <ShieldAlert className="text-danger" size={16} /> Core Network Security Logs
+        </h6>
+        <Badge bg="danger" className="border border-danger border-opacity-25 bg-opacity-10 text-danger">LIVE</Badge>
+      </Card.Header>
       
-      <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+      <Card.Body className="overflow-auto p-3 d-flex flex-column gap-3" style={{ maxHeight: '350px' }}>
         {alerts.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-gray-500 opacity-50 italic text-sm">
-            <Info className="w-8 h-8 mb-2" />
+          <div className="h-100 d-flex flex-column align-items-center justify-content-center text-secondary opacity-50 fst-italic small">
+            <Info size={32} className="mb-2" />
             No active threats detected. Network monitoring stable.
           </div>
         ) : (
           alerts.map((alert, idx) => (
-            <div key={idx} className={`p-3 rounded-lg border flex flex-col gap-1 animate-in fade-in slide-in-from-right duration-500 ${
-                alert.severity === 'high' ? 'bg-red-500/5 border-red-500/20' : 'bg-yellow-500/5 border-yellow-500/20'
+            <div key={idx} className={`p-3 rounded border d-flex flex-column gap-1 ${
+                alert.severity === 'high' ? 'bg-danger bg-opacity-10 border-danger border-opacity-25' : 'bg-warning bg-opacity-10 border-warning border-opacity-25'
             }`}>
-              <div className="flex justify-between items-start">
-                <span className={`text-xs font-bold uppercase ${alert.severity === 'high' ? 'text-red-500' : 'text-yellow-500'}`}>
+              <div className="d-flex justify-content-between align-items-start">
+                <span className={`small fw-bold text-uppercase ${alert.severity === 'high' ? 'text-danger' : 'text-warning'}`}>
                   {alert.type} DETECTED
                 </span>
-                <span className="text-[10px] text-gray-500 flex items-center gap-1">
-                  <Clock className="w-3 h-3" /> {new Date(alert.timestamp).toLocaleTimeString()}
+                <span className="text-secondary d-flex align-items-center gap-1" style={{ fontSize: '10px' }}>
+                  <Clock size={12} /> {new Date(alert.timestamp).toLocaleTimeString()}
                 </span>
               </div>
-              <p className="text-sm text-gray-300">Target Node: <span className="text-trust-accent font-mono">{alert.nodeId}</span></p>
-              <div className="mt-1 flex gap-2">
-                  <span className="text-[10px] bg-white/5 px-2 py-0.5 rounded">Action: Automatic Isolation</span>
-                  <span className="text-[10px] bg-white/5 px-2 py-0.5 rounded">Protocol: Zero-Trust v3</span>
+              <p className="small text-light mb-1">Target Node: <span className="text-info font-monospace">{alert.nodeId}</span></p>
+              <div className="d-flex gap-2">
+                  <Badge bg="secondary" className="bg-opacity-25 fw-normal" style={{ fontSize: '10px' }}>Action: Automatic Isolation</Badge>
+                  <Badge bg="secondary" className="bg-opacity-25 fw-normal" style={{ fontSize: '10px' }}>Protocol: Zero-Trust v3</Badge>
               </div>
             </div>
           ))
         )}
-      </div>
-    </div>
+      </Card.Body>
+    </Card>
   );
 };
 

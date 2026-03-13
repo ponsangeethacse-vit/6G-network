@@ -6,6 +6,7 @@ import {
   LineElement, Title, Tooltip, Legend, Filler 
 } from 'chart.js';
 import { AlertTriangle, Server, Smartphone, Cpu, Activity, UserX, Shield } from 'lucide-react';
+import { Container, Row, Col, Card, Badge, ListGroup } from 'react-bootstrap';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
 
@@ -29,10 +30,10 @@ interface TrafficTick {
 
 const getRoleIcon = (role: number) => {
   switch (role) {
-    case 1: return <Smartphone className="w-5 h-5 text-blue-400" />;
-    case 2: return <Server className="w-5 h-5 text-purple-400" />;
-    case 3: return <Cpu className="w-5 h-5 text-cyan-400" />;
-    default: return <Activity className="w-5 h-5 text-slate-400" />;
+    case 1: return <Smartphone size={20} className="text-info" />;
+    case 2: return <Server size={20} className="text-primary" />;
+    case 3: return <Cpu size={20} className="text-info" />;
+    default: return <Activity size={20} className="text-secondary" />;
   }
 };
 
@@ -117,8 +118,8 @@ export default function TrustDashboard({ socket, socketUrl }: DashboardProps) {
       {
         label: 'Fusion Trust Score (%)',
         data: selectedNode ? (nodeHistory[selectedNode] || []) : [],
-        borderColor: 'rgb(59, 130, 246)',
-        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        borderColor: 'rgb(13, 110, 253)',
+        backgroundColor: 'rgba(13, 110, 253, 0.1)',
         fill: true,
         tension: 0.4,
         pointRadius: 0,
@@ -127,7 +128,7 @@ export default function TrustDashboard({ socket, socketUrl }: DashboardProps) {
       {
         label: 'Anomaly Threshold',
         data: Array.from({ length: 30 }, () => 60),
-        borderColor: 'rgba(239, 68, 68, 0.5)',
+        borderColor: 'rgba(220, 53, 69, 0.5)',
         borderDash: [5, 5],
         borderWidth: 1,
         pointRadius: 0,
@@ -158,133 +159,153 @@ export default function TrustDashboard({ socket, socketUrl }: DashboardProps) {
   const isBlocked = currentScore < 60;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl lg:col-span-1">
-        <div className="p-4 border-b border-slate-800 bg-slate-800/50">
-          <h2 className="font-semibold text-slate-100 flex items-center gap-2">
-            <Activity className="w-5 h-5 text-blue-400" /> Active 6G Nodes
-          </h2>
-        </div>
-        <div className="divide-y divide-slate-800/50 max-h-[600px] overflow-y-auto">
-          {nodes.map(node => {
-            const nodeScore = nodeHistory[node.address] ? nodeHistory[node.address][nodeHistory[node.address].length - 1] : 100;
-            const nodeBlocked = nodeScore < 60;
-            return (
-              <button
-                key={node.address}
-                onClick={() => setSelectedNode(node.address)}
-                className={`w-full text-left p-4 hover:bg-slate-800/50 transition-colors flex flex-col gap-2 ${selectedNode === node.address ? 'bg-blue-900/20 border-l-4 border-blue-500' : 'border-l-4 border-transparent'}`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {getRoleIcon(node.role)}
-                    <span className="font-medium text-slate-200 text-sm">{getRoleName(node.role)}</span>
+    <Row className="g-4">
+      <Col lg={4} xl={3}>
+        <Card bg="dark" border="secondary" className="shadow-lg h-100">
+          <Card.Header className="bg-black bg-opacity-25 border-bottom border-secondary p-3">
+            <h5 className="mb-0 text-light d-flex align-items-center gap-2">
+              <Activity className="text-primary" size={20} /> Active 6G Nodes
+            </h5>
+          </Card.Header>
+          <ListGroup variant="flush" className="overflow-auto bg-dark" style={{ maxHeight: '600px' }}>
+            {nodes.map(node => {
+              const nodeScore = nodeHistory[node.address] ? nodeHistory[node.address][nodeHistory[node.address].length - 1] : 100;
+              const nodeBlocked = nodeScore < 60;
+              return (
+                <ListGroup.Item 
+                  key={node.address}
+                  action
+                  onClick={() => setSelectedNode(node.address)}
+                  className={`bg-dark text-light border-bottom border-secondary p-3 ${selectedNode === node.address ? 'border-primary border-start border-4' : 'border-start border-4 border-transparent'}`}
+                  style={{ backgroundColor: selectedNode === node.address ? 'rgba(13, 110, 253, 0.1)' : 'transparent', cursor: 'pointer' }}
+                >
+                  <div className="d-flex align-items-center justify-content-between mb-2">
+                    <div className="d-flex align-items-center gap-2">
+                      {getRoleIcon(node.role)}
+                      <span className="fw-medium text-light small">{getRoleName(node.role)}</span>
+                    </div>
+                    <Badge bg={nodeBlocked ? 'danger' : 'success'} pill>
+                      {nodeBlocked ? 'Blocked' : 'Trusted'}
+                    </Badge>
                   </div>
-                  <span className={`text-xs px-2 py-1 rounded-full font-medium ${nodeBlocked ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`}>
-                    {nodeBlocked ? 'Blocked' : 'Trusted'}
+                  <div className="text-secondary small font-monospace text-truncate mb-2">{node.address}</div>
+                  <div className="d-flex align-items-center justify-content-between mt-1">
+                    <span className="small text-secondary">Trust Score</span>
+                    <span className={`small fw-bold ${nodeBlocked ? 'text-danger' : 'text-primary'}`}>{nodeScore}%</span>
+                  </div>
+                </ListGroup.Item>
+              );
+            })}
+            {nodes.length === 0 && <div className="p-4 text-center text-secondary small">Awaiting Network Telemetry...</div>}
+          </ListGroup>
+        </Card>
+      </Col>
+
+      <Col lg={8} xl={9}>
+        <Row className="g-4 mb-4">
+          <Col md={4}>
+            <Card bg="dark" border="secondary" className="shadow-lg h-100 position-relative overflow-hidden">
+              <div className="position-absolute top-0 end-0 p-3 opacity-25">
+                <Activity size={48} className="text-secondary" />
+              </div>
+              <Card.Body className="p-4">
+                <h6 className="text-secondary fw-medium mb-1">Real-Time Fusion Score</h6>
+                <div className="d-flex align-items-baseline gap-2 mb-2">
+                  <span className={`display-5 fw-bold ${isBlocked ? 'text-danger' : 'text-primary'}`}>{currentScore}</span>
+                  <span className="text-secondary fw-medium">/ 100</span>
+                </div>
+                <p className="small text-secondary mb-0">ML Weighted Direct + Indirect Trust</p>
+              </Card.Body>
+            </Card>
+          </Col>
+
+          <Col md={4}>
+            <Card bg="dark" border="secondary" className="shadow-lg h-100 position-relative overflow-hidden">
+              <div className="position-absolute top-0 end-0 p-3 opacity-25">
+                <Activity size={48} className="text-secondary" />
+              </div>
+              <Card.Body className="p-4">
+                <h6 className="text-secondary fw-medium mb-1">Predicted Trend (LSTM Proxy)</h6>
+                <div className="d-flex align-items-baseline gap-2 mb-2">
+                  <span className={`display-5 fw-bold ${predictedScore && predictedScore < 60 ? 'text-warning' : 'text-success'}`}>
+                    {predictedScore ? Math.round(predictedScore) : '--'}
                   </span>
                 </div>
-                <div className="text-xs text-slate-500 font-mono truncate">{node.address}</div>
-                <div className="flex items-center justify-between mt-1">
-                  <span className="text-xs text-slate-400">Trust Score</span>
-                  <span className={`text-sm font-bold ${nodeBlocked ? 'text-red-400' : 'text-blue-400'}`}>{nodeScore}%</span>
-                </div>
-              </button>
-            );
-          })}
-          {nodes.length === 0 && <div className="p-8 text-center text-slate-500 text-sm">Awaiting Network Telemetry...</div>}
-        </div>
-      </div>
+                <p className="small text-secondary mb-0">Next cycle prediction trajectory</p>
+              </Card.Body>
+            </Card>
+          </Col>
 
-      <div className="lg:col-span-3 flex flex-col gap-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-4 opacity-10">
-              <Activity className="w-16 h-16" />
-            </div>
-            <h3 className="text-slate-400 text-sm font-medium mb-1">Real-Time Fusion Score</h3>
-            <div className="flex items-baseline gap-2">
-              <span className={`text-4xl font-bold ${isBlocked ? 'text-red-500' : 'text-blue-500'}`}>{currentScore}</span>
-              <span className="text-slate-500 font-medium">/ 100</span>
-            </div>
-            <p className="text-xs text-slate-500 mt-2">ML Weighted Direct + Indirect Trust</p>
-          </div>
+          <Col md={4}>
+            <Card bg="dark" border={isBlocked ? 'danger' : 'secondary'} className="shadow-lg h-100 position-relative overflow-hidden" style={{ backgroundColor: isBlocked ? 'rgba(220, 53, 69, 0.1)' : '' }}>
+               <div className="position-absolute top-0 end-0 p-3 opacity-25">
+                <UserX size={48} className="text-secondary" />
+               </div>
+               <Card.Body className="p-4">
+                 <h6 className="text-secondary fw-medium mb-1">Access Control Policy</h6>
+                 <div className="d-flex align-items-center gap-3 mt-3">
+                    {isBlocked ? (
+                      <>
+                        <div className="rounded-circle bg-danger bg-opacity-25 d-flex align-items-center justify-content-center" style={{ width: '40px', height: '40px' }}>
+                          <AlertTriangle className="text-danger" size={20} />
+                        </div>
+                        <div>
+                          <div className="text-danger fw-bold">REVOKED</div>
+                          <div className="small text-danger opacity-75">Blockchain contract blocked</div>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="rounded-circle bg-success bg-opacity-25 d-flex align-items-center justify-content-center" style={{ width: '40px', height: '40px' }}>
+                          <Shield className="text-success" size={20} />
+                        </div>
+                        <div>
+                          <div className="text-success fw-bold">GRANTED</div>
+                          <div className="small text-success opacity-75">Zero-Trust Verified</div>
+                        </div>
+                      </>
+                    )}
+                 </div>
+               </Card.Body>
+            </Card>
+          </Col>
+        </Row>
 
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-4 opacity-10">
-              <Activity className="w-16 h-16" />
+        <Card bg="dark" border="secondary" className="shadow-lg mb-4" style={{ height: '320px' }}>
+          <Card.Body className="p-4 d-flex flex-column">
+            <h6 className="text-light fw-semibold mb-3">Trust Fusion Lifeline</h6>
+            <div className="flex-grow-1 position-relative">
+              <Line data={chartData} options={chartOptions as any} />
             </div>
-            <h3 className="text-slate-400 text-sm font-medium mb-1">Predicted Trend (LSTM Proxy)</h3>
-            <div className="flex items-baseline gap-2">
-              <span className={`text-4xl font-bold ${predictedScore && predictedScore < 60 ? 'text-orange-500' : 'text-emerald-500'}`}>
-                {predictedScore ? Math.round(predictedScore) : '--'}
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 mt-2">Next cycle prediction trajectory</p>
-          </div>
+          </Card.Body>
+        </Card>
 
-          <div className={`bg-slate-900 border rounded-xl p-6 shadow-xl relative overflow-hidden transition-colors ${isBlocked ? 'border-red-500 bg-red-950/20' : 'border-slate-800'}`}>
-             <div className="absolute top-0 right-0 p-4 opacity-10">
-              <UserX className="w-16 h-16" />
-             </div>
-             <h3 className="text-slate-400 text-sm font-medium mb-1">Access Control Policy</h3>
-             <div className="flex items-center gap-3 mt-2">
-                {isBlocked ? (
-                  <>
-                    <div className="h-8 w-8 rounded-full bg-red-500/20 flex items-center justify-center">
-                      <AlertTriangle className="w-4 h-4 text-red-500" />
-                    </div>
+        <Card bg="dark" border="secondary" className="shadow-lg overflow-hidden">
+          <Card.Header className="bg-black bg-opacity-25 border-bottom border-secondary p-3 d-flex justify-content-between align-items-center">
+            <h6 className="mb-0 text-light d-flex align-items-center gap-2">
+              <AlertTriangle className="text-warning" size={20} /> Security Intelligence Alerts
+            </h6>
+            <Badge bg="secondary" text="light" className="font-monospace">LATEST_LOGS_ONLY</Badge>
+          </Card.Header>
+          <Card.Body className="p-3">
+            <div className="d-flex flex-column gap-3">
+              {alerts.length === 0 ? (
+                <div className="text-center text-secondary small py-3">No recent security events. System is stable.</div>
+              ) : (
+                alerts.map((alert, idx) => (
+                  <div key={idx} className="d-flex gap-3 align-items-start p-3 bg-danger bg-opacity-10 border border-danger border-opacity-25 rounded w-100">
+                    <span className="text-danger small font-monospace flex-shrink-0 pt-1">{alert.time}</span>
                     <div>
-                      <div className="text-red-500 font-bold">REVOKED</div>
-                      <div className="text-xs text-red-500/70">Blockchain contract blocked</div>
+                       <p className="text-light small fw-medium mb-1">{alert.msg}</p>
+                       <p className="text-danger opacity-75 small font-monospace mb-0">{alert.node}</p>
                     </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="h-8 w-8 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                      <Shield className="w-4 h-4 text-emerald-500" />
-                    </div>
-                    <div>
-                      <div className="text-emerald-500 font-bold">GRANTED</div>
-                      <div className="text-xs text-emerald-500/70">Zero-Trust Verified</div>
-                    </div>
-                  </>
-                )}
-             </div>
-          </div>
-        </div>
-
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl h-80 relative">
-          <h2 className="text-slate-300 font-semibold mb-4 text-sm">Trust Fusion Lifeline</h2>
-          <div className="absolute inset-0 top-14 left-6 right-6 bottom-6">
-            <Line data={chartData} options={chartOptions as any} />
-          </div>
-        </div>
-
-        <div className="bg-slate-900 border border-slate-800 rounded-xl shadow-xl overflow-hidden">
-          <div className="p-4 border-b border-slate-800 bg-slate-800/50 flex justify-between items-center">
-            <h2 className="font-semibold text-slate-100 flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-orange-400" /> Security Intelligence Alerts
-            </h2>
-            <span className="text-xs font-mono bg-slate-800 px-2 py-1 rounded text-slate-400">LATEST_LOGS_ONLY</span>
-          </div>
-          <div className="p-4 flex flex-col gap-3">
-            {alerts.length === 0 ? (
-              <div className="text-center text-slate-500 text-sm py-4">No recent security events. System is stable.</div>
-            ) : (
-              alerts.map((alert, idx) => (
-                <div key={idx} className="flex gap-4 items-start p-3 bg-red-500/10 border border-red-500/20 rounded-lg animate-in slide-in-from-left-4 fade-in">
-                  <span className="text-red-400 text-xs font-mono shrink-0 pt-0.5">{alert.time}</span>
-                  <div>
-                     <p className="text-red-100 text-sm font-medium">{alert.msg}</p>
-                     <p className="text-red-400/70 text-xs font-mono mt-1">{alert.node}</p>
                   </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
+                ))
+              )}
+            </div>
+          </Card.Body>
+        </Card>
+      </Col>
+    </Row>
   );
 }
