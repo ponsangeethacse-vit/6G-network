@@ -67,11 +67,21 @@ export class TrustFusionService {
   }
 
   async computeTrust(nodeAddress: string): Promise<number | null> {
-    const directTrust = this.calculateDirectTrust(nodeAddress);
-    const indirectTrust = this.calculateIndirectTrust(nodeAddress);
+    const behavioral = this.calculateDirectTrust(nodeAddress);
+    const reputation = this.calculateIndirectTrust(nodeAddress);
+    
+    // 📊 Derive Historical Trust from last 5 scores
+    const history = this.getHistoricalTrust(nodeAddress);
+    const recent = history.slice(-5);
+    const historical = recent.length > 0 
+      ? (recent.reduce((a, b) => a + b, 0) / recent.length) / 100 
+      : 0.8; // Default seed
 
-    // Use ML Engine for Fusion
-    const fusionScore = await mlEngineService.computeFusionTrust(directTrust, indirectTrust);
+    // 🌍 Context Trust (e.g., node role or ambient metrics)
+    const context = 0.8; // Stand-in dynamic parameter supporting factor architecture
+
+    // Use Python Microservice for Fusion
+    const fusionScore = await mlEngineService.computeFusionTrust(behavioral, historical, reputation, context);
 
     // Save history
     if (!this.trustHistory.has(nodeAddress)) {

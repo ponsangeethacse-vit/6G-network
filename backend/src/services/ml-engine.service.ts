@@ -6,17 +6,17 @@ export class MLEngineService {
   }
 
 
-  // Uses Python Microservice to predict fusion score based on Direct and Indirect trust
-  async computeFusionTrust(directTrust: number, indirectTrust: number): Promise<number> {
+  // Uses Python Microservice to predict fusion score based on 4 trust factors
+  async computeFusionTrust(behavioral: number, historical: number, reputation: number, context: number): Promise<number> {
     try {
       const response = await fetch(`${PYTHON_AI_URL}/calculate-trust`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          behavioral_trust: directTrust,
-          historical_trust: 0.8, // Default fallback or seed
-          reputation_trust: indirectTrust,
-          context_trust: 0.75     // Default fallback or seed
+          behavioral_trust: behavioral,
+          historical_trust: historical,
+          reputation_trust: reputation,
+          context_trust: context
         })
       });
 
@@ -30,7 +30,7 @@ export class MLEngineService {
     } catch (error: any) {
       console.error('[MLEngine] Error calling Python AI Service:', error.message);
       // Fallback weighted average if microservice is offline
-      return Math.round(((directTrust * 0.7) + (indirectTrust * 0.3)) * 100);
+      return Math.round(((behavioral * 0.35) + (historical * 0.25) + (reputation * 0.20) + (context * 0.20)) * 100);
     }
   }
 

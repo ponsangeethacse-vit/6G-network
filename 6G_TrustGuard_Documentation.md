@@ -45,9 +45,12 @@ The project is structured into three distinct layers:
 ## 3. Core Algorithms & Logic
 
 ### 📐 **Multi-Factor Trust Fusion**
-1. **Direct Trust**: Speed/Latency calculations weighted against Success/Failure interaction logs.
-2. **Indirect Trust**: Aggregates average periodic feedbacks scored by neighboring peers.
-3. **Fusion (Python AI)**: Instead of basic averages, the system forwards vectors to the FastAPI service applying weighted grading to outputs.
+1. **Behavioral Trust (35%)**: Direct interaction quality computed from connection stats.
+2. **Historical Trust (25%)**: Moving aggregate derived from the last 5 cached scores.
+3. **Reputation Trust (20%)**: Neighboring node/peer feedback score averages.
+4. **Context Trust (20%)**: Ambient environment default parameters.
+
+**Fusion (Python AI)**: Processes vectors using the exact weighted algorithm inside FastAPI and updates the Blockchain ledger accordingly.
 
 ---
 

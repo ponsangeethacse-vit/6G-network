@@ -79,8 +79,8 @@ function mineBlock(nodeAddr, score, action) {
 }
 
 // ─── Simulator ────────────────────────────────────────────────────────────────
-function runSimulatorTick() {
-  MOCK_NODES.forEach(node => {
+async function runSimulatorTick() {
+  for (const node of MOCK_NODES) {
     const isMalicious = node.address === '0x9999999999999999999999999999999999999999';
     const attacking = isMalicious && maliciousMode;
 
@@ -92,11 +92,13 @@ function runSimulatorTick() {
     const newScore = Math.max(0, Math.min(100, Math.round(prev + delta)));
     trustScores[node.address] = newScore;
 
+    const packetRate = attacking ? 500 : Math.floor(Math.random() * 20 + 1);
+
     // Emit trust_update matching the shape TrustDashboard expects
     io.emit('trust_update', {
       node: node.address,
       packetSize: attacking ? 5000 : Math.floor(Math.random() * 500 + 100),
-      packetRate: attacking ? 500  : Math.floor(Math.random() * 20 + 1),
+      packetRate: packetRate,
       isMaliciousMode: maliciousMode,
       trustScore: newScore
     });
@@ -112,15 +114,31 @@ function runSimulatorTick() {
 
     // Generate attack alert when trust falls below threshold
     if (newScore < 60) {
-      const ATTACK_TYPES = [
-        { type: 'DDoS Attack',         msg: 'High-volume packet flooding detected' },
-        { type: 'Sybil Attack',        msg: 'Duplicate identity spoofing suspected' },
-        { type: 'Data Manipulation',   msg: 'Packet payload integrity violation' },
-        { type: 'Insider Threat',      msg: 'Anomalous internal access pattern' },
-      ];
-      const pick = attacking
-        ? ATTACK_TYPES[0]  // always DDoS when malicious mode
-        : ATTACK_TYPES[Math.floor(Math.random() * ATTACK_TYPES.length)];
+      let classification = 'Insider Threat';
+      let message = 'Anomalous internal access pattern';
+
+      try {
+        const response = await fetch('http://localhost:8000/predict-attack', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            packet_rate: packetRate,
+            latency: attacking ? 600 : 40,
+            failed_requests: attacking ? 50 : 3,
+            connection_attempts: attacking ? 10 : 2
+          })
+        });
+
+        if (response.ok) {
+          const aiData = await response.json();
+          classification = aiData.classification;
+          message = aiData.message;
+          console.log(`[AI-Service] Predicted [${classification}] for Node ${node.address.slice(0,6)}`);
+        }
+      } catch (e) {
+        // Fallback placeholder logic if AI microservice goes down
+        classification = attacking ? 'DDoS Attack' : 'Data Manipulation';
+      }
 
       const severity = newScore < 30 ? 'critical' : newScore < 50 ? 'high' : 'medium';
       const nodeLabel = `Node ${node.address.slice(2, 6).toUpperCase()}`;
@@ -129,9 +147,9 @@ function runSimulatorTick() {
         id: `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
         nodeId: node.address,
         nodeLabel,
-        type: pick.type,
-        message: `⚠️ ${pick.type} detected on ${nodeLabel}`,
-        detail:  pick.msg,
+        type: classification.includes('Attack') ? classification : `${classification} Attack`,
+        message: `⚠️ ${classification} detected on ${nodeLabel}`,
+        detail:  message,
         severity,
         trustScore: newScore,
         timestamp: Date.now(),
@@ -142,7 +160,7 @@ function runSimulatorTick() {
       // Push real-time to connected clients
       io.emit('new_alert', alert);
     }
-  });
+  }
 }
 
 // ─── REST API ─────────────────────────────────────────────────────────────────

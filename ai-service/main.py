@@ -68,8 +68,8 @@ def calculate_trust(metrics: TrustMetrics):
         # Simulating dense outputs: score heavily relies on behavioral and peer metrics.
         b_weight = 0.35
         h_weight = 0.25
-        r_weight = 0.25
-        c_weight = 0.15
+        r_weight = 0.20
+        c_weight = 0.20
 
         raw_score = (
             metrics.behavioral_trust * b_weight +
