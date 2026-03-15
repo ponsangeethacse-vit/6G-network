@@ -78,29 +78,50 @@ function mineBlock(nodeAddr, score, action) {
   io.emit('new_transaction', tx);
 }
 
+const activeAttacks = {}; // { [nodeAddress]: 'DDoS' | 'Sybil' | 'DataManipulation' }
+
 // ─── Simulator ────────────────────────────────────────────────────────────────
 async function runSimulatorTick() {
   for (const node of MOCK_NODES) {
-    const isMalicious = node.address === '0x9999999999999999999999999999999999999999';
-    const attacking = isMalicious && maliciousMode;
+    const attack = activeAttacks[node.address] || 'Normal';
+    const attacking = attack !== 'Normal';
 
     // Compute trust score change
     let delta = (Math.random() * 6) - 2; // -2 to +4 normally
-    if (attacking) delta = -(Math.random() * 15 + 10); // sharp drop during attack
+    if (attacking) delta = -(Math.random() * 18 + 12); // sharp drop during attack
 
     const prev = trustScores[node.address] ?? 85;
     const newScore = Math.max(0, Math.min(100, Math.round(prev + delta)));
     trustScores[node.address] = newScore;
 
-    const packetRate = attacking ? 500 : Math.floor(Math.random() * 20 + 1);
+    // Default metrics
+    let packetRate = Math.floor(Math.random() * 20 + 1);
+    let packetSize = Math.floor(Math.random() * 500 + 100);
+    let responseTimeMs = Math.floor(Math.random() * 80 + 20);
+
+    // Apply attack profiles
+    if (attack === 'DDoS') {
+      packetRate = 500;
+      packetSize = 5000;
+      responseTimeMs = 1500;
+    } else if (attack === 'Sybil') {
+      packetRate = 80;
+      packetSize = 250;
+      responseTimeMs = 120;
+    } else if (attack === 'DataManipulation') {
+      packetRate = 4;
+      packetSize = 100;
+      responseTimeMs = 10; // Manipulated low latency
+    }
 
     // Emit trust_update matching the shape TrustDashboard expects
     io.emit('trust_update', {
       node: node.address,
-      packetSize: attacking ? 5000 : Math.floor(Math.random() * 500 + 100),
+      packetSize: packetSize,
       packetRate: packetRate,
-      isMaliciousMode: maliciousMode,
-      trustScore: newScore
+      isMaliciousMode: attacking,
+      trustScore: newScore,
+      attackType: attack
     });
 
     // Mine a block with the appropriate action type
@@ -261,11 +282,26 @@ app.post('/api/nodes/:addr/trust', (req, res) => {
   res.json({ success: true, addr, action: 'trust_updated', trustScore: clamped });
 });
 
-app.post('/api/simulator/toggle', (req, res) => {
-  maliciousMode = !maliciousMode;
-  console.log(`[Simulator] Malicious mode: ${maliciousMode}`);
-  io.emit('simulator_mode', { maliciousMode });
-  res.json({ maliciousMode });
+app.post('/api/simulator/attack', (req, res) => {
+  const { node, attackType } = req.body;
+  if (node) {
+    activeAttacks[node] = attackType;
+    console.log(`[Simulator] ⚔️ Attack [${attackType}] triggered on ${node}`);
+    io.emit('simulator_mode', { node, attackType, isMaliciousMode: true });
+    return res.json({ success: true, message: `Started ${attackType} on ${node}` });
+  }
+  res.status(400).json({ error: 'Node address required' });
+});
+
+app.post('/api/simulator/stop-attack', (req, res) => {
+  const { node } = req.body;
+  if (node) {
+    delete activeAttacks[node];
+    console.log(`[Simulator] 🛡️ Attack stopped on ${node}`);
+    io.emit('simulator_mode', { node, attackType: 'Normal', isMaliciousMode: false });
+    return res.json({ success: true, message: `Stopped attack on ${node}` });
+  }
+  res.status(400).json({ error: 'Node address required' });
 });
 
 // ─── Socket.IO ────────────────────────────────────────────────────────────────

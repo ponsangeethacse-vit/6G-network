@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Row, Col, Card, Badge, Spinner, Button } from 'react-bootstrap';
 import CytoscapeComponent from 'react-cytoscapejs';
 import { io } from 'socket.io-client';
+import axios from 'axios';
 import {
   Server, Smartphone, Cpu, Activity, Shield,
   ShieldCheck, ShieldAlert, ShieldOff, X,
@@ -164,6 +165,8 @@ const NetworkDashboardPage = () => {
   const [txLog, setTxLog]           = useState<TxRecord[]>([]);
   const cyRef                       = useRef<cytoscape.Core | null>(null);
   const localScores                 = useRef<Record<string, number>>({});
+  const [simAttack, setSimAttack]   = useState<string>('DDoS');
+  const [loadingAttack, setLoadingAttack] = useState<boolean>(false);
 
   // ── Build stable Cytoscape elements ────────────────────────────────────
   const buildElements = useCallback((ns: NetworkNode[]) => {
@@ -265,6 +268,27 @@ const NetworkDashboardPage = () => {
     const iv = setInterval(fetchData, 10000);
     return () => clearInterval(iv);
   }, [fetchData]);
+
+  const handleLaunchAttack = async (nodeAddr: string, type: string, stop = false) => {
+    setLoadingAttack(true);
+    try {
+      const endpoint = stop ? '/api/simulator/stop-attack' : '/api/simulator/attack';
+      await axios.post(`${SOCKET_URL}${endpoint}`, { node: nodeAddr, attackType: type });
+      
+      // Update local state is optional as socket will push trust change
+      setSelected(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          node: { ...prev.node, status: stop ? 'trusted' : 'malicious' },
+        };
+      });
+    } catch (e) {
+      console.error('[Simulator] Error triggering attack:', e);
+    } finally {
+      setLoadingAttack(false);
+    }
+  };
 
   // ── Node click handler ──────────────────────────────────────────────────
   const handleNodeClick = useCallback((addr: string) => {
@@ -438,6 +462,34 @@ const NetworkDashboardPage = () => {
                       className={`bg-${scoreColor(selected.node.trustScore)} h-100 rounded-pill`}
                       style={{ width: `${selected.node.trustScore ?? 0}%`, transition: 'width 0.5s ease' }}
                     />
+                  </div>
+                </div>
+
+                {/* Simulation Controls */}
+                <div className="pt-3 border-top border-secondary border-opacity-25">
+                  <p className="text-secondary mb-2 d-flex align-items-center gap-1 small">
+                    <ShieldAlert size={13} className="text-warning" /> Security Simulation
+                  </p>
+                  <div className="d-flex gap-2">
+                    <select 
+                      className="form-select btn btn-sm btn-outline-secondary text-start text-light bg-dark"
+                      style={{ borderColor: 'rgba(255,255,255,0.1)' }}
+                      value={simAttack}
+                      onChange={(e) => setSimAttack(e.target.value)}
+                      disabled={loadingAttack}
+                    >
+                      <option value="DDoS">DDoS Attack</option>
+                      <option value="Sybil">Sybil Attack</option>
+                      <option value="DataManipulation">Data Manipulation</option>
+                    </select>
+                    <Button 
+                      size="sm" 
+                      variant={selected.node.status === 'malicious' || selected.node.status === 'suspicious' ? "secondary" : "danger"}
+                      onClick={() => handleLaunchAttack(selected.node.address, simAttack, selected.node.status === 'malicious' || selected.node.status === 'suspicious')}
+                      disabled={loadingAttack}
+                    >
+                      {loadingAttack ? <Spinner animation="border" size="sm" /> : (selected.node.status === 'malicious' || selected.node.status === 'suspicious' ? "Stop" : "Launch")}
+                    </Button>
                   </div>
                 </div>
 

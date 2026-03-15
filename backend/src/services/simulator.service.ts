@@ -16,7 +16,7 @@ const NODES = [
 export class TrafficSimulatorService {
   private isRunning = false;
   private intervalId: NodeJS.Timeout | null = null;
-  public maliciousMode = false;
+  public activeAttacks: Map<string, string> = new Map(); // nodeAddress -> attackType
 
   startSimulation() {
     this.isRunning = true;
@@ -31,14 +31,19 @@ export class TrafficSimulatorService {
     console.log('[Simulator] 🔴 Simulation Stopped');
   }
 
-  toggleMalicious() {
-    this.maliciousMode = !this.maliciousMode;
-    console.log(`[Simulator] Malicious mode is now: ${this.maliciousMode}`);
+  triggerAttack(node: string, attackType: string) {
+    this.activeAttacks.set(node.toLowerCase(), attackType);
+    console.log(`[Simulator] ⚔️ Attack triggered on ${node}: ${attackType}`);
+  }
+
+  stopAttack(node: string) {
+    this.activeAttacks.delete(node.toLowerCase());
+    console.log(`[Simulator] 🛡️ Attack stopped on ${node}`);
   }
 
   private async generateTrafficTick() {
     for (const node of NODES) {
-      const isMaliciousNode = node === '0x9999999999999999999999999999999999999999';
+      const attack = this.activeAttacks.get(node.toLowerCase()) || 'Normal';
       
       let packetSize = Math.floor(Math.random() * 500) + 100;
       let packetRate = Math.floor(Math.random() * 20) + 1;
@@ -46,13 +51,24 @@ export class TrafficSimulatorService {
       let success = Math.random() > 0.1; // 90% success normally
       let peerFeedback = 0.8 + (Math.random() * 0.2); // Normal feedback (0.8 - 1.0)
 
-      if (isMaliciousNode && this.maliciousMode) {
-        // Simulating DDoS / Packet Flooding / Sybil
+      if (attack === 'DDoS') {
         packetSize = 5000;
         packetRate = 500;
         responseTimeMs = 1500; // congestion
         success = Math.random() > 0.8; // mostly fails
-        peerFeedback = Math.random() * 0.3; // Low peer feedback
+        peerFeedback = Math.random() * 0.2; 
+      } else if (attack === 'Sybil') {
+        packetSize = 150;
+        packetRate = 80;
+        responseTimeMs = 200;
+        success = false; 
+        peerFeedback = Math.random() * 0.1;
+      } else if (attack === 'DataManipulation') {
+        packetSize = 50;
+        packetRate = 5;
+        responseTimeMs = 10;
+        success = true; // look fine
+        peerFeedback = 0.0; // severe reputation penalty triggers anomaly
       }
 
       // 1. Module 1: Role ID
@@ -86,9 +102,9 @@ export class TrafficSimulatorService {
         node,
         packetSize,
         packetRate,
-        isMaliciousMode: this.maliciousMode,
+        isMaliciousMode: attack !== 'Normal',
         trustScore: score,
-        attackType // optional forward
+        attackType: attack
       });
     }
   }
