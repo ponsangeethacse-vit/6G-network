@@ -1,8 +1,14 @@
 import React, { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { io, Socket } from 'socket.io-client';
-import { Container, Navbar, Button, Badge } from 'react-bootstrap';
-import TrustDashboard from './components/TrustDashboard';
-import { Shield, ShieldAlert, Activity } from 'lucide-react';
+
+import DashboardLayout from './layouts/DashboardLayout';
+import LoginPage from './pages/LoginPage';
+import NetworkDashboardPage from './pages/NetworkDashboardPage';
+import TrustScoreVisualizationPage from './pages/TrustScoreVisualizationPage';
+import AttackDetectionMonitorPage from './pages/AttackDetectionMonitorPage';
+import BlockchainTransactionViewerPage from './pages/BlockchainTransactionViewerPage';
+import NodeManagementPanelPage from './pages/NodeManagementPanelPage';
 
 const SOCKET_SERVER_URL = 'http://localhost:4000';
 
@@ -23,6 +29,29 @@ function App() {
       setMaliciousMode(data.maliciousMode);
     });
 
+    // Fetch initial nodes for global context
+    fetch(`${SOCKET_SERVER_URL}/api/nodes`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.nodes) setNodes(data.nodes);
+      })
+      .catch(err => console.error("Failed to fetch initial nodes", err));
+
+    newSocket.on('trust_update', (tick: any) => {
+       setNodes(prev => {
+         // Transform data to suit NetworkGraph nodes visualization if needed,
+         // but TrustDashboard expects { address, role }
+         if (!prev.find(n => n.address === tick.node)) {
+            fetch(`${SOCKET_SERVER_URL}/api/nodes`)
+             .then(res => res.json())
+             .then(data => {
+               if (data.nodes) setNodes(data.nodes);
+             });
+         }
+         return prev;
+       });
+    });
+
     return () => {
       newSocket.close();
     };
@@ -41,43 +70,29 @@ function App() {
   };
 
   return (
-    <div className="min-vh-100 bg-dark text-light font-sans" style={{ backgroundColor: '#0a0a0c' }}>
-      <Navbar bg="dark" variant="dark" expand="lg" sticky="top" className="border-bottom border-secondary mb-4" style={{ backgroundColor: 'rgba(33, 37, 41, 0.9)' }}>
-        <Container>
-          <Navbar.Brand href="#home" className="d-flex align-items-center gap-3">
-            <Shield className="text-primary" size={32} />
-            <span className="fw-bold fs-4 tracking-tight text-white">6G Trust Defender</span>
-          </Navbar.Brand>
-          
-          <Navbar.Collapse className="justify-content-end">
-            <div className="d-flex align-items-center gap-4">
-              <div className="d-flex align-items-center gap-2 text-sm">
-                <Badge bg={isConnected ? 'success' : 'danger'} pill className="p-2">
-                  {isConnected ? 'System Online' : 'Connecting...'}
-                </Badge>
-              </div>
-              <Button
-                variant={maliciousMode ? 'outline-danger' : 'outline-success'}
-                onClick={toggleMaliciousMode}
-                className="d-flex align-items-center gap-2"
-                style={{
-                  boxShadow: maliciousMode ? '0 0 15px rgba(220, 53, 69, 0.3)' : 'none'
-                }}
-              >
-                {maliciousMode ? <ShieldAlert size={16} /> : <Activity size={16} />}
-                {maliciousMode ? 'Malicious Traffic: ON' : 'Normal Traffic'}
-              </Button>
-            </div>
-          </Navbar.Collapse>
-        </Container>
-      </Navbar>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<LoginPage />} />
+        
+        <Route element={<DashboardLayout 
+            socket={socket} 
+            socketUrl={SOCKET_SERVER_URL} 
+            maliciousMode={maliciousMode}
+            isConnected={isConnected}
+            toggleMaliciousMode={toggleMaliciousMode}
+            nodes={nodes}
+          />}
+        >
+          <Route path="/dashboard" element={<NetworkDashboardPage />} />
+          <Route path="/dashboard/trust" element={<TrustScoreVisualizationPage />} />
+          <Route path="/dashboard/alerts" element={<AttackDetectionMonitorPage />} />
+          <Route path="/dashboard/blockchain" element={<BlockchainTransactionViewerPage />} />
+          <Route path="/dashboard/nodes" element={<NodeManagementPanelPage />} />
+        </Route>
 
-      <main>
-        <Container fluid="lg" className="py-4">
-          {socket && <TrustDashboard socket={socket} socketUrl={SOCKET_SERVER_URL} />}
-        </Container>
-      </main>
-    </div>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
 
