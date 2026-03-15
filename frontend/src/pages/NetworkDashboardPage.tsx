@@ -1,441 +1,496 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Row, Col, Card, Badge, Table, Spinner } from 'react-bootstrap';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Row, Col, Card, Badge, Spinner, Button } from 'react-bootstrap';
+import CytoscapeComponent from 'react-cytoscapejs';
+import { io } from 'socket.io-client';
 import {
-  Server, ShieldCheck, ShieldAlert, ShieldOff,
-  Bell, Database, RefreshCw, Wifi, WifiOff, Activity
+  Server, Smartphone, Cpu, Activity, Shield,
+  ShieldCheck, ShieldAlert, ShieldOff, X,
+  Clock, Fingerprint, Database, Wifi
 } from 'lucide-react';
 
-const API_BASE = 'http://localhost:4000/api';
+const API_BASE   = 'http://localhost:4000/api';
+const SOCKET_URL = 'http://localhost:4000';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface NetworkNode {
   address: string;
-  nodeId?: string;
-  role?: number;
-  trustScore?: number;
-  status?: 'trusted' | 'suspicious' | 'isolated';
+  role: number;
+  trustScore?: number;   // 0–100
+  status?: 'trusted' | 'suspicious' | 'malicious';
 }
 
-interface AttackAlert {
-  nodeId: string;
-  type: string;
-  severity: 'high' | 'medium' | 'low';
+interface TxRecord {
+  blockId: number;
+  action: string;
+  txHash: string;
   timestamp: number;
+  trustScore: number;
 }
 
-interface BlockchainBlock {
-  index: number;
-  hash: string;
-  previousHash: string;
-  transactions: any[];
+interface SelectedPanel {
+  node: NetworkNode;
+  activity: string[];
+  lastTx: TxRecord | null;
 }
 
-interface DashboardMetrics {
-  totalNodes: number;
-  trustedNodes: number;
-  suspiciousNodes: number;
-  isolatedNodes: number;
-  activeAlerts: number;
-  blockchainTxCount: number;
-}
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+const classify = (score: number): NetworkNode['status'] =>
+  score >= 70 ? 'trusted' : score >= 40 ? 'suspicious' : 'malicious';
 
-// ─── Metric Card ─────────────────────────────────────────────────────────────
-interface MetricCardProps {
-  title: string;
-  value: number | string;
-  icon: React.ReactNode;
-  color: string;           // 'success' | 'warning' | 'danger' | 'info' | 'primary'
-  glowColor: string;       // CSS rgba string
-  subtitle?: string;
-  pulse?: boolean;
-}
-
-const MetricCard = ({ title, value, icon, color, glowColor, subtitle, pulse }: MetricCardProps) => (
-  <Card
-    bg="dark"
-    border="secondary"
-    className="shadow-lg h-100 position-relative overflow-hidden"
-    style={{ transition: 'transform 0.2s, box-shadow 0.2s', cursor: 'default' }}
-    onMouseEnter={e => {
-      (e.currentTarget as HTMLElement).style.transform = 'translateY(-4px)';
-      (e.currentTarget as HTMLElement).style.boxShadow = `0 8px 30px ${glowColor}`;
-    }}
-    onMouseLeave={e => {
-      (e.currentTarget as HTMLElement).style.transform = 'translateY(0)';
-      (e.currentTarget as HTMLElement).style.boxShadow = '';
-    }}
-  >
-    {/* Background accent glow */}
-    <div
-      className="position-absolute top-0 end-0"
-      style={{ width: '120px', height: '120px', background: `radial-gradient(circle at top right, ${glowColor}, transparent 70%)`, pointerEvents: 'none' }}
-    />
-
-    <Card.Body className="p-4 d-flex align-items-start justify-content-between">
-      <div>
-        <p className="text-secondary small mb-2 text-uppercase fw-semibold" style={{ letterSpacing: '1px' }}>{title}</p>
-        <div className="d-flex align-items-baseline gap-2">
-          <span className={`display-6 fw-bold text-${color}`} style={{ lineHeight: 1 }}>
-            {value}
-          </span>
-        </div>
-        {subtitle && <p className="text-secondary small mt-2 mb-0">{subtitle}</p>}
-      </div>
-
-      <div
-        className={`rounded-3 d-flex align-items-center justify-content-center flex-shrink-0`}
-        style={{ width: '52px', height: '52px', backgroundColor: `${glowColor}`, position: 'relative' }}
-      >
-        {pulse && (
-          <span
-            className="position-absolute top-0 end-0 translate-middle rounded-circle bg-danger border border-dark"
-            style={{ width: '12px', height: '12px', animation: 'blinker 1.2s step-start infinite' }}
-          />
-        )}
-        <span className={`text-${color}`}>{icon}</span>
-      </div>
-    </Card.Body>
-  </Card>
-);
-
-// ─── Severity Badge ───────────────────────────────────────────────────────────
-const SeverityBadge = ({ severity }: { severity: string }) => {
-  const map: Record<string, string> = { high: 'danger', medium: 'warning', low: 'info' };
-  return <Badge bg={map[severity] || 'secondary'} className="text-uppercase" style={{ fontSize: '10px' }}>{severity}</Badge>;
+const nodeColor = (status?: NetworkNode['status']) => {
+  switch (status) {
+    case 'trusted':    return '#198754';  // green
+    case 'suspicious': return '#ffc107';  // yellow
+    case 'malicious':  return '#dc3545';  // red
+    default:           return '#0d6efd';  // blue (loading)
+  }
 };
 
-// ─── Main Dashboard ───────────────────────────────────────────────────────────
-const NetworkDashboardPage = () => {
-  const [nodes, setNodes] = useState<NetworkNode[]>([]);
-  const [alerts, setAlerts] = useState<AttackAlert[]>([]);
-  const [blocks, setBlocks] = useState<BlockchainBlock[]>([]);
-  const [metrics, setMetrics] = useState<DashboardMetrics>({
-    totalNodes: 0, trustedNodes: 0, suspiciousNodes: 0,
-    isolatedNodes: 0, activeAlerts: 0, blockchainTxCount: 0
-  });
-  const [loading, setLoading] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+const nodeBorder = (status?: NetworkNode['status']) => {
+  switch (status) {
+    case 'trusted':    return '#0f5132';
+    case 'suspicious': return '#997404';
+    case 'malicious':  return '#842029';
+    default:           return '#084298';
+  }
+};
 
-  // ── Fetch all data ──────────────────────────────────────────────────────────
+const getRoleLabel = (role?: number) => {
+  switch (role) {
+    case 1: return 'IoT Device';
+    case 2: return 'Base Station';
+    case 3: return 'Cellular Relay';
+    default: return 'Unknown';
+  }
+};
+
+const getRoleIcon = (role?: number, size = 18) => {
+  switch (role) {
+    case 1: return <Smartphone size={size} className="text-info" />;
+    case 2: return <Server size={size} className="text-primary" />;
+    case 3: return <Cpu size={size} className="text-warning" />;
+    default: return <Activity size={size} className="text-secondary" />;
+  }
+};
+
+const StatusBadge = ({ status }: { status?: NetworkNode['status'] }) => {
+  const map = { trusted: 'success', suspicious: 'warning', malicious: 'danger' };
+  const icons = {
+    trusted: <ShieldCheck size={12} className="me-1" />,
+    suspicious: <ShieldAlert size={12} className="me-1" />,
+    malicious: <ShieldOff size={12} className="me-1" />,
+  };
+  const s = status ?? 'trusted';
+  return (
+    <Badge bg={map[s]} className="text-uppercase d-inline-flex align-items-center" style={{ fontSize: '10px' }}>
+      {icons[s]}{s}
+    </Badge>
+  );
+};
+
+// ─── Cytoscape stylesheet ────────────────────────────────────────────────────
+const makeCyStylesheet = (nodes: NetworkNode[]) => {
+  // Build per-node rules for color
+  const nodeRules = nodes.map(n => ({
+    selector: `#${n.address}`,
+    style: {
+      'background-color': nodeColor(n.status),
+      'border-color': nodeBorder(n.status),
+      'border-width': 3,
+    },
+  }));
+
+  return [
+    {
+      selector: 'node',
+      style: {
+        'shape': 'ellipse',
+        'width': 48,
+        'height': 48,
+        'label': 'data(label)',
+        'color': '#ffffff',
+        'text-valign': 'bottom',
+        'text-halign': 'center',
+        'text-margin-y': 6,
+        'font-size': 10,
+        'font-weight': 'bold',
+        'border-width': 2,
+        'border-color': '#444',
+        'background-color': '#0d6efd',
+        'text-outline-color': '#0a0a0c',
+        'text-outline-width': 2,
+        'transition-property': 'background-color border-color',
+        'transition-duration': '0.4s' as any,
+      },
+    },
+    {
+      selector: 'node:selected',
+      style: {
+        'border-width': 5,
+        'border-color': '#ffffff',
+        'width': 58,
+        'height': 58,
+      },
+    },
+    {
+      selector: 'edge',
+      style: {
+        'width': 1.5,
+        'line-color': 'rgba(100,116,139,0.35)',
+        'curve-style': 'bezier',
+        'opacity': 0.8,
+      },
+    },
+    {
+      selector: 'edge.highlighted',
+      style: {
+        'line-color': 'rgba(13,110,253,0.7)',
+        'width': 2.5,
+        'opacity': 1,
+      },
+    },
+    ...nodeRules,
+  ];
+};
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+const NetworkDashboardPage = () => {
+  const [nodes, setNodes]           = useState<NetworkNode[]>([]);
+  const [selected, setSelected]     = useState<SelectedPanel | null>(null);
+  const [loading, setLoading]       = useState(true);
+  const [txLog, setTxLog]           = useState<TxRecord[]>([]);
+  const cyRef                       = useRef<cytoscape.Core | null>(null);
+  const localScores                 = useRef<Record<string, number>>({});
+
+  // ── Build stable Cytoscape elements ────────────────────────────────────
+  const buildElements = useCallback((ns: NetworkNode[]) => {
+    const cyNodes = ns.map(n => ({
+      data: {
+        id: n.address,
+        label: `${getRoleLabel(n.role)}\n${n.address.slice(2, 6).toUpperCase()}`,
+        trustScore: n.trustScore ?? 85,
+        status: n.status ?? 'trusted',
+      },
+    }));
+
+    // Build a deterministic mesh (every node connects to 2 others)
+    const cyEdges: any[] = [];
+    for (let i = 0; i < ns.length; i++) {
+      for (let j = i + 1; j < ns.length; j++) {
+        cyEdges.push({
+          data: {
+            id: `e-${ns[i].address}-${ns[j].address}`,
+            source: ns[i].address,
+            target: ns[j].address,
+          },
+        });
+      }
+    }
+    return [...cyNodes, ...cyEdges];
+  }, []);
+
+  // ── Fetch nodes + transactions ──────────────────────────────────────────
   const fetchData = useCallback(async () => {
     try {
-      const [nodesRes, attacksRes, chainRes] = await Promise.allSettled([
+      const [nodesRes, txRes] = await Promise.all([
         fetch(`${API_BASE}/nodes`),
-        fetch(`${API_BASE}/attacks`),
-        fetch(`${API_BASE}/blockchain`),
+        fetch(`${API_BASE}/transactions?limit=50`),
       ]);
 
-      let fetchedNodes: NetworkNode[] = [];
-      let fetchedAlerts: AttackAlert[] = [];
-      let fetchedBlocks: BlockchainBlock[] = [];
+      const nodesData = nodesRes.ok ? (await nodesRes.json()).nodes ?? [] : [];
+      const txData: TxRecord[] = txRes.ok ? await txRes.json() : [];
 
-      if (nodesRes.status === 'fulfilled' && nodesRes.value.ok) {
-        const data = await nodesRes.value.json();
-        fetchedNodes = data.nodes ?? data ?? [];
-      }
-
-      if (attacksRes.status === 'fulfilled' && attacksRes.value.ok) {
-        fetchedAlerts = await attacksRes.value.json();
-        if (!Array.isArray(fetchedAlerts)) fetchedAlerts = [];
-      }
-
-      if (chainRes.status === 'fulfilled' && chainRes.value.ok) {
-        fetchedBlocks = await chainRes.value.json();
-        if (!Array.isArray(fetchedBlocks)) fetchedBlocks = [];
-      }
-
-      // Derive status from trust score if present
-      const classified = fetchedNodes.map(n => ({
-        ...n,
-        status: (n.trustScore ?? 100) >= 70
-          ? 'trusted'
-          : (n.trustScore ?? 100) >= 40
-            ? 'suspicious'
-            : 'isolated'
-      })) as NetworkNode[];
-
-      setNodes(classified);
-      setAlerts(fetchedAlerts);
-      setBlocks(fetchedBlocks);
-
-      const trusted = classified.filter(n => n.status === 'trusted').length;
-      const suspicious = classified.filter(n => n.status === 'suspicious').length;
-      const isolated = classified.filter(n => n.status === 'isolated').length;
-      const txCount = fetchedBlocks.reduce((sum, b) => sum + (b.transactions?.length ?? 0), 0);
-
-      setMetrics({
-        totalNodes: classified.length,
-        trustedNodes: trusted,
-        suspiciousNodes: suspicious,
-        isolatedNodes: isolated,
-        activeAlerts: fetchedAlerts.filter(a => a.severity === 'high').length,
-        blockchainTxCount: txCount,
+      const enriched: NetworkNode[] = nodesData.map((n: any) => {
+        const score = localScores.current[n.address] ?? 85;
+        return { ...n, trustScore: score, status: classify(score) };
       });
 
-      setLastUpdated(new Date());
-    } catch (err) {
-      console.error('Dashboard fetch error:', err);
-    } finally {
+      setNodes(enriched);
+      setTxLog(txData);
+      setLoading(false);
+    } catch (e) {
+      console.error(e);
       setLoading(false);
     }
   }, []);
 
+  // ── Socket: live trust updates ──────────────────────────────────────────
+  useEffect(() => {
+    const socket = io(SOCKET_URL);
+
+    socket.on('trust_update', (tick: { node: string; trustScore: number }) => {
+      localScores.current[tick.node] = tick.trustScore;
+      const status = classify(tick.trustScore);
+
+      setNodes(prev =>
+        prev.map(n =>
+          n.address === tick.node
+            ? { ...n, trustScore: tick.trustScore, status }
+            : n
+        )
+      );
+
+      // Update Cytoscape node color live
+      if (cyRef.current) {
+        const cyNode = cyRef.current.$(`#${tick.node}`);
+        if (cyNode.length) {
+          cyNode.style({
+            'background-color': nodeColor(status),
+            'border-color': nodeBorder(status),
+          });
+        }
+      }
+
+      // Update selected panel if this is the selected node
+      setSelected(prev => {
+        if (!prev || prev.node.address !== tick.node) return prev;
+        const updated = { ...prev.node, trustScore: tick.trustScore, status };
+        const activity = [
+          `${new Date().toLocaleTimeString()} — Trust updated to ${tick.trustScore}%`,
+          ...prev.activity,
+        ].slice(0, 6);
+        return { ...prev, node: updated, activity };
+      });
+    });
+
+    socket.on('new_transaction', (tx: TxRecord) => {
+      setTxLog(prev => [tx, ...prev].slice(0, 50));
+    });
+
+    return () => { socket.disconnect(); };
+  }, []);
+
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
+    const iv = setInterval(fetchData, 10000);
+    return () => clearInterval(iv);
   }, [fetchData]);
 
-  // ── Cards config ────────────────────────────────────────────────────────────
-  const cards: MetricCardProps[] = [
-    {
-      title: 'Total Network Nodes',
-      value: metrics.totalNodes,
-      icon: <Server size={24} />,
-      color: 'primary',
-      glowColor: 'rgba(13, 110, 253, 0.18)',
-      subtitle: 'Active in mesh',
-    },
-    {
-      title: 'Trusted Nodes',
-      value: metrics.trustedNodes,
-      icon: <ShieldCheck size={24} />,
-      color: 'success',
-      glowColor: 'rgba(25, 135, 84, 0.18)',
-      subtitle: 'Trust score ≥ 70',
-    },
-    {
-      title: 'Suspicious Nodes',
-      value: metrics.suspiciousNodes,
-      icon: <ShieldAlert size={24} />,
-      color: 'warning',
-      glowColor: 'rgba(255, 193, 7, 0.18)',
-      subtitle: 'Score 40 – 69',
-    },
-    {
-      title: 'Isolated Nodes',
-      value: metrics.isolatedNodes,
-      icon: <ShieldOff size={24} />,
-      color: 'danger',
-      glowColor: 'rgba(220, 53, 69, 0.18)',
-      subtitle: 'Score < 40 (blocked)',
-      pulse: metrics.isolatedNodes > 0,
-    },
-    {
-      title: 'Active Alerts',
-      value: metrics.activeAlerts,
-      icon: <Bell size={24} />,
-      color: metrics.activeAlerts > 0 ? 'danger' : 'secondary',
-      glowColor: metrics.activeAlerts > 0 ? 'rgba(220, 53, 69, 0.18)' : 'rgba(108,117,125,0.1)',
-      subtitle: 'High-severity events',
-      pulse: metrics.activeAlerts > 0,
-    },
-    {
-      title: 'Blockchain Transactions',
-      value: metrics.blockchainTxCount,
-      icon: <Database size={24} />,
-      color: 'info',
-      glowColor: 'rgba(13, 202, 240, 0.18)',
-      subtitle: 'Recorded on-chain',
-    },
-  ];
+  // ── Node click handler ──────────────────────────────────────────────────
+  const handleNodeClick = useCallback((addr: string) => {
+    const node = nodes.find(n => n.address === addr);
+    if (!node) return;
 
-  const statusColor: Record<string, string> = {
-    trusted: 'success',
-    suspicious: 'warning',
-    isolated: 'danger',
-  };
-
-  const getRoleName = (role?: number) => {
-    switch (role) {
-      case 1: return 'IoT Edge Device';
-      case 2: return 'Base Station';
-      case 3: return 'Cellular Relay';
-      default: return 'Unknown';
+    // Highlight connected edges
+    if (cyRef.current) {
+      cyRef.current.edges().removeClass('highlighted');
+      cyRef.current.$(`#${addr}`).connectedEdges().addClass('highlighted');
     }
-  };
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+    const nodeTxs = txLog.filter(t => t.nodeId === addr || t.nodeId?.includes?.(addr));
+    const lastTx  = nodeTxs[0] ?? null;
+    const activity = nodeTxs.slice(0, 5).map(
+      t => `${new Date(t.timestamp).toLocaleTimeString()} — ${t.action}`
+    );
+    if (activity.length === 0) activity.push('No recent on-chain activity');
+
+    setSelected({ node, activity, lastTx });
+  }, [nodes, txLog]);
+
+  // ── Setup Cy event listeners once ─────────────────────────────────────
+  const initCy = useCallback((cy: cytoscape.Core) => {
+    cyRef.current = cy;
+    cy.removeAllListeners();
+    cy.on('tap', 'node', evt => {
+      handleNodeClick(evt.target.id());
+    });
+    cy.on('tap', evt => {
+      if (evt.target === cy) {
+        cy.edges().removeClass('highlighted');
+        setSelected(null);
+      }
+    });
+  }, [handleNodeClick]);
+
+  const elements = buildElements(nodes);
+  const scoreColor = (score?: number) =>
+    !score ? 'secondary' : score >= 70 ? 'success' : score >= 40 ? 'warning' : 'danger';
+
+  // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <div>
-      {/* Header row */}
+      {/* Header */}
       <div className="d-flex align-items-center justify-content-between mb-4">
         <div>
-          <h4 className="text-light fw-bold mb-1">Network Overview</h4>
+          <h4 className="text-light fw-bold mb-1">Network Topology</h4>
           <p className="text-secondary small mb-0">
-            Real-time 6G mesh monitoring &mdash; auto-refreshes every 5 s
+            Live 6G mesh visualization — click a node to inspect details
           </p>
         </div>
-        <div className="d-flex align-items-center gap-3">
-          {lastUpdated && (
-            <span className="text-secondary small d-flex align-items-center gap-1">
-              <RefreshCw size={12} />
-              {lastUpdated.toLocaleTimeString()}
-            </span>
-          )}
-          {loading
-            ? <Spinner animation="border" variant="primary" size="sm" />
-            : <Activity size={18} className="text-success" />
-          }
+        <div className="d-flex align-items-center gap-2">
+          {/* Legend */}
+          {[
+            { color: '#198754', label: 'Trusted' },
+            { color: '#ffc107', label: 'Suspicious' },
+            { color: '#dc3545', label: 'Malicious' },
+          ].map(({ color, label }) => (
+            <div key={label} className="d-flex align-items-center gap-1" style={{ fontSize: '11px' }}>
+              <div className="rounded-circle" style={{ width: 10, height: 10, backgroundColor: color, flexShrink: 0 }} />
+              <span className="text-secondary">{label}</span>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* ── Metric Cards ── */}
-      <Row className="g-3 mb-4">
-        {cards.map((card, i) => (
-          <Col key={i} xs={12} sm={6} xl={4}>
-            <MetricCard {...card} />
-          </Col>
-        ))}
-      </Row>
+      <Row className="g-3">
+        {/* ── Graph ── */}
+        <Col lg={selected ? 8 : 12} style={{ transition: 'all 0.3s ease' }}>
+          <Card bg="dark" border="secondary" className="shadow-lg overflow-hidden" style={{ height: '580px' }}>
+            <Card.Body className="p-0 position-relative">
+              {loading ? (
+                <div className="h-100 d-flex align-items-center justify-content-center text-secondary">
+                  <Spinner animation="border" variant="primary" className="me-2" />
+                  Initializing 6G Network Mesh…
+                </div>
+              ) : nodes.length === 0 ? (
+                <div className="h-100 d-flex flex-column align-items-center justify-content-center text-secondary opacity-50">
+                  <Wifi size={40} className="mb-2" />
+                  <span className="small">Awaiting network telemetry…</span>
+                </div>
+              ) : (
+                <CytoscapeComponent
+                  key={nodes.length}   /* remount if node count changes */
+                  elements={elements}
+                  style={{ width: '100%', height: '100%' }}
+                  layout={{ name: 'cose', animate: true, padding: 40 } as any}
+                  stylesheet={makeCyStylesheet(nodes) as any}
+                  cy={initCy}
+                />
+              )}
 
-      {/* ── Bottom rows: Node Table + Recent Alerts ── */}
-      <Row className="g-3 mb-4">
-        {/* Node Table */}
-        <Col lg={7}>
-          <Card bg="dark" border="secondary" className="shadow-lg h-100">
-            <Card.Header className="bg-black bg-opacity-25 border-bottom border-secondary p-3 d-flex align-items-center justify-content-between">
-              <h6 className="mb-0 text-secondary text-uppercase d-flex align-items-center gap-2" style={{ letterSpacing: '1px' }}>
-                <Server size={15} /> Node Registry
-              </h6>
-              <Badge bg="secondary" className="font-monospace" style={{ fontSize: '10px' }}>{nodes.length} NODES</Badge>
-            </Card.Header>
+              {/* Node count badge */}
+              {!loading && nodes.length > 0 && (
+                <div className="position-absolute top-0 start-0 m-3">
+                  <Badge bg="dark" className="border border-secondary px-2 py-1" style={{ fontSize: '11px' }}>
+                    <Wifi size={10} className="me-1 text-success" />{nodes.length} nodes
+                  </Badge>
+                </div>
+              )}
+            </Card.Body>
+          </Card>
+        </Col>
 
-            <Card.Body className="p-0">
-              <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
-                <Table hover variant="dark" className="mb-0" size="sm">
-                  <thead style={{ position: 'sticky', top: 0, backgroundColor: '#1a1a1f', zIndex: 1 }}>
-                    <tr>
-                      <th className="text-secondary fw-normal small px-3 py-2">Node Address</th>
-                      <th className="text-secondary fw-normal small py-2">Role</th>
-                      <th className="text-secondary fw-normal small py-2">Trust</th>
-                      <th className="text-secondary fw-normal small py-2">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {nodes.length === 0 ? (
-                      <tr>
-                        <td colSpan={4} className="text-center text-secondary py-5 small">
-                          <WifiOff size={28} className="mb-2 d-block mx-auto opacity-50" />
-                          Waiting for network telemetry…
-                        </td>
-                      </tr>
-                    ) : nodes.map((node, idx) => (
-                      <tr key={idx}>
-                        <td className="font-monospace px-3 py-2" style={{ fontSize: '11px', color: '#adb5bd', maxWidth: '200px' }}>
-                          <span className="text-truncate d-block">{node.address ?? node.nodeId}</span>
-                        </td>
-                        <td className="small py-2 text-light">{getRoleName(node.role)}</td>
-                        <td className="small py-2">
-                          <span className={`fw-bold text-${statusColor[node.status ?? 'trusted']}`}>
-                            {node.trustScore != null ? `${node.trustScore}%` : '—'}
-                          </span>
-                        </td>
-                        <td className="py-2">
-                          <Badge
-                            bg={statusColor[node.status ?? 'trusted']}
-                            className="text-uppercase"
-                            style={{ fontSize: '10px' }}
-                          >
-                            {node.status ?? 'trusted'}
-                          </Badge>
-                        </td>
-                      </tr>
+        {/* ── Side Panel ── */}
+        {selected && (
+          <Col lg={4} style={{ transition: 'all 0.3s ease' }}>
+            <Card bg="dark" border="secondary" className="shadow-lg" style={{ height: '580px', overflowY: 'auto' }}>
+              <Card.Header className="bg-black bg-opacity-25 border-bottom border-secondary p-3 d-flex align-items-center justify-content-between">
+                <span className="text-secondary text-uppercase fw-semibold" style={{ fontSize: '12px', letterSpacing: '1px' }}>
+                  Node Inspector
+                </span>
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="text-secondary p-0 ms-auto"
+                  onClick={() => {
+                    setSelected(null);
+                    cyRef.current?.edges().removeClass('highlighted');
+                  }}
+                >
+                  <X size={18} />
+                </Button>
+              </Card.Header>
+
+              <Card.Body className="p-4 d-flex flex-column gap-4">
+                {/* Identity */}
+                <div>
+                  <div className="d-flex align-items-center gap-3 mb-3">
+                    <div
+                      className="rounded-3 d-flex align-items-center justify-content-center"
+                      style={{
+                        width: 52, height: 52,
+                        backgroundColor: `${nodeColor(selected.node.status)}22`,
+                        border: `2px solid ${nodeColor(selected.node.status)}`,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {getRoleIcon(selected.node.role, 24)}
+                    </div>
+                    <div>
+                      <div className="text-light fw-bold">
+                        Node {selected.node.address.slice(2, 6).toUpperCase()}
+                      </div>
+                      <div className="text-secondary small">{getRoleLabel(selected.node.role)}</div>
+                      <StatusBadge status={selected.node.status} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Node ID */}
+                <div>
+                  <p className="text-secondary mb-1 d-flex align-items-center gap-1 small" style={{ letterSpacing: '0.5px' }}>
+                    <Fingerprint size={13} /> Node ID
+                  </p>
+                  <p className="font-monospace text-info small mb-0 text-break">{selected.node.address}</p>
+                </div>
+
+                {/* Trust Score */}
+                <div>
+                  <p className="text-secondary mb-2 d-flex align-items-center gap-1 small">
+                    <Shield size={13} /> Trust Score
+                  </p>
+                  <div className={`display-6 fw-bold text-${scoreColor(selected.node.trustScore)}`}>
+                    {selected.node.trustScore ?? '--'}
+                    <span className="fs-6 text-secondary fw-normal ms-1">/ 100</span>
+                  </div>
+                  <div className="mt-2 bg-secondary bg-opacity-25 rounded-pill overflow-hidden" style={{ height: 8 }}>
+                    <div
+                      className={`bg-${scoreColor(selected.node.trustScore)} h-100 rounded-pill`}
+                      style={{ width: `${selected.node.trustScore ?? 0}%`, transition: 'width 0.5s ease' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Recent Activity */}
+                <div>
+                  <p className="text-secondary mb-2 d-flex align-items-center gap-1 small">
+                    <Clock size={13} /> Recent Activity
+                  </p>
+                  <div className="d-flex flex-column gap-2">
+                    {selected.activity.map((act, i) => (
+                      <div key={i} className="p-2 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-25 small text-light">
+                        {act}
+                      </div>
                     ))}
-                  </tbody>
-                </Table>
-              </div>
-            </Card.Body>
-          </Card>
-        </Col>
-
-        {/* Recent Alerts */}
-        <Col lg={5}>
-          <Card bg="dark" border="secondary" className="shadow-lg h-100">
-            <Card.Header className="bg-black bg-opacity-25 border-bottom border-secondary p-3 d-flex align-items-center justify-content-between">
-              <h6 className="mb-0 text-secondary text-uppercase d-flex align-items-center gap-2" style={{ letterSpacing: '1px' }}>
-                <Bell size={15} /> Recent Alerts
-              </h6>
-              <Badge bg="danger" className="bg-opacity-75" style={{ fontSize: '10px' }}>LIVE</Badge>
-            </Card.Header>
-
-            <Card.Body className="p-3 d-flex flex-column gap-2" style={{ maxHeight: '320px', overflowY: 'auto' }}>
-              {alerts.length === 0 ? (
-                <div className="h-100 d-flex flex-column align-items-center justify-content-center text-secondary small opacity-50 py-4">
-                  <ShieldCheck size={28} className="mb-2" />
-                  No active threats. Network stable.
-                </div>
-              ) : alerts.slice(0, 8).map((alert, idx) => (
-                <div
-                  key={idx}
-                  className={`p-2 rounded border d-flex justify-content-between align-items-start ${
-                    alert.severity === 'high'
-                      ? 'bg-danger bg-opacity-10 border-danger border-opacity-25'
-                      : 'bg-warning bg-opacity-10 border-warning border-opacity-25'
-                  }`}
-                >
-                  <div>
-                    <p className="small fw-bold mb-0 text-light">{alert.type} Detected</p>
-                    <p className="mb-0 font-monospace text-secondary" style={{ fontSize: '10px' }}>
-                      {alert.nodeId?.slice(0, 20)}…
-                    </p>
-                  </div>
-                  <div className="text-end flex-shrink-0 ms-2">
-                    <SeverityBadge severity={alert.severity} />
-                    <p className="mb-0 text-secondary mt-1" style={{ fontSize: '10px' }}>
-                      {new Date(alert.timestamp).toLocaleTimeString()}
-                    </p>
                   </div>
                 </div>
-              ))}
-            </Card.Body>
-          </Card>
-        </Col>
+
+                {/* Last Blockchain Record */}
+                <div>
+                  <p className="text-secondary mb-2 d-flex align-items-center gap-1 small">
+                    <Database size={13} /> Last Blockchain Record
+                  </p>
+                  {selected.lastTx ? (
+                    <div className="p-3 rounded border border-info border-opacity-25 bg-info bg-opacity-10">
+                      <div className="d-flex justify-content-between mb-1">
+                        <span className="text-secondary small">Block</span>
+                        <span className="text-info font-monospace small">#{selected.lastTx.blockId}</span>
+                      </div>
+                      <div className="d-flex justify-content-between mb-1">
+                        <span className="text-secondary small">Action</span>
+                        <span className="text-light small fw-medium">{selected.lastTx.action}</span>
+                      </div>
+                      <div className="d-flex justify-content-between mb-1">
+                        <span className="text-secondary small">TX Hash</span>
+                        <span className="text-info font-monospace" style={{ fontSize: '10px' }}>
+                          {selected.lastTx.txHash.slice(0, 10)}…
+                        </span>
+                      </div>
+                      <div className="d-flex justify-content-between">
+                        <span className="text-secondary small">Time</span>
+                        <span className="text-secondary small">{new Date(selected.lastTx.timestamp).toLocaleTimeString()}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-secondary small opacity-50 fst-italic">No on-chain records yet</p>
+                  )}
+                </div>
+
+              </Card.Body>
+            </Card>
+          </Col>
+        )}
       </Row>
-
-      {/* ── Blockchain Recent Blocks ── */}
-      <Card bg="dark" border="secondary" className="shadow-lg">
-        <Card.Header className="bg-black bg-opacity-25 border-bottom border-secondary p-3 d-flex align-items-center justify-content-between">
-          <h6 className="mb-0 text-secondary text-uppercase d-flex align-items-center gap-2" style={{ letterSpacing: '1px' }}>
-            <Database size={15} /> Recent Blockchain Blocks
-          </h6>
-          <Badge bg="info" className="bg-opacity-75 text-dark font-monospace" style={{ fontSize: '10px' }}>PROOF-OF-TRUST</Badge>
-        </Card.Header>
-
-        <Card.Body className="p-3">
-          {blocks.length === 0 ? (
-            <p className="text-secondary small text-center py-3 mb-0">No blocks mined yet…</p>
-          ) : (
-            <div className="d-flex gap-3 overflow-auto pb-2">
-              {[...blocks].reverse().slice(0, 6).map((block, idx) => (
-                <div
-                  key={idx}
-                  className="flex-shrink-0 rounded border border-secondary p-3"
-                  style={{ minWidth: '180px', backgroundColor: '#111116', fontSize: '11px' }}
-                >
-                  <div className="d-flex align-items-center gap-2 mb-2">
-                    <Database size={12} className="text-info" />
-                    <span className="fw-bold font-monospace text-light">BLOCK #{block.index}</span>
-                  </div>
-                  <div className="text-secondary font-monospace mb-1">
-                    <span className="d-block text-secondary" style={{ fontSize: '9px' }}>HASH</span>
-                    <span className="text-info text-truncate d-block">{block.hash?.slice(0, 18)}…</span>
-                  </div>
-                  <div className="d-flex justify-content-between border-top border-secondary pt-2 mt-2">
-                    <span className="text-secondary">TXs: {block.transactions?.length ?? 0}</span>
-                    <span className="text-success fw-bold">✓ Valid</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card.Body>
-      </Card>
-
-      {/* Pulse animation style */}
-      <style>{`
-        @keyframes blinker { 50% { opacity: 0; } }
-      `}</style>
     </div>
   );
 };

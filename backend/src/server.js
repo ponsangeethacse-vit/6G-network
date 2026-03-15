@@ -31,19 +31,51 @@ let blockIndex = 1;
 
 MOCK_NODES.forEach(n => { trustScores[n.address] = 85; });
 
-function generateHash() {
-  return '0x' + [...Array(40)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
+// Transaction log — separate from blocks, for the TX viewer table
+const txLog = [];   // rich transaction records
+let txSeq = 1;
+
+const ACTIONS = ['Trust Score Updated', 'Attack Detected', 'Node Isolated', 'Node Recovered'];
+
+function generateHash(len = 64) {
+  return '0x' + [...Array(len)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
 }
 
-function mineBlock(nodeAddr, score) {
-  const prev = blockchainBlocks.length > 0 ? blockchainBlocks[blockchainBlocks.length - 1].hash : '0x0000...genesis';
+function mineBlock(nodeAddr, score, action) {
+  const prev = blockchainBlocks.length > 0
+    ? blockchainBlocks[blockchainBlocks.length - 1].hash
+    : '0x0000000000000000000000000000000000000000000000000000000000000000';
+
+  const blockHash = generateHash(64);
+  const txHash    = generateHash(64);
+  const nodeLabel = `Node ${nodeAddr.slice(2,6).toUpperCase()}`;
+  const timestamp = Date.now();
+
+  // Rich transaction record for the log table
+  const tx = {
+    id:        txSeq++,
+    blockId:   blockIndex,
+    nodeId:    nodeAddr,
+    nodeLabel,
+    action:    action || 'Trust Score Updated',
+    txHash,
+    blockHash,
+    timestamp,
+    trustScore: score,
+  };
+  txLog.unshift(tx);
+  if (txLog.length > 100) txLog.pop();
+
   blockchainBlocks.push({
     index: blockIndex++,
-    hash: generateHash(),
+    hash: blockHash,
     previousHash: prev,
-    transactions: [{ node: nodeAddr, trustScore: score, ts: Date.now() }]
+    transactions: [tx],
   });
-  if (blockchainBlocks.length > 10) blockchainBlocks.shift(); // keep rolling window
+  if (blockchainBlocks.length > 20) blockchainBlocks.shift();
+
+  // Broadcast new transaction in real time
+  io.emit('new_transaction', tx);
 }
 
 // ─── Simulator ────────────────────────────────────────────────────────────────
@@ -69,19 +101,46 @@ function runSimulatorTick() {
       trustScore: newScore
     });
 
-    // Mine a block every few ticks
-    if (Math.random() < 0.3) mineBlock(node.address, newScore);
+    // Mine a block with the appropriate action type
+    if (Math.random() < 0.35) {
+      let action = 'Trust Score Updated';
+      if (newScore < 30)       action = 'Node Isolated';
+      else if (newScore < 60)  action = 'Attack Detected';
+      else if (prev < 60 && newScore >= 60) action = 'Node Recovered';
+      mineBlock(node.address, newScore, action);
+    }
 
-    // Generate attack alert if below threshold
+    // Generate attack alert when trust falls below threshold
     if (newScore < 60) {
+      const ATTACK_TYPES = [
+        { type: 'DDoS Attack',         msg: 'High-volume packet flooding detected' },
+        { type: 'Sybil Attack',        msg: 'Duplicate identity spoofing suspected' },
+        { type: 'Data Manipulation',   msg: 'Packet payload integrity violation' },
+        { type: 'Insider Threat',      msg: 'Anomalous internal access pattern' },
+      ];
+      const pick = attacking
+        ? ATTACK_TYPES[0]  // always DDoS when malicious mode
+        : ATTACK_TYPES[Math.floor(Math.random() * ATTACK_TYPES.length)];
+
+      const severity = newScore < 30 ? 'critical' : newScore < 50 ? 'high' : 'medium';
+      const nodeLabel = `Node ${node.address.slice(2, 6).toUpperCase()}`;
+
       const alert = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
         nodeId: node.address,
-        type: attacking ? 'DDoS' : 'Anomaly',
-        severity: newScore < 40 ? 'high' : 'medium',
-        timestamp: Date.now()
+        nodeLabel,
+        type: pick.type,
+        message: `⚠️ ${pick.type} detected on ${nodeLabel}`,
+        detail:  pick.msg,
+        severity,
+        trustScore: newScore,
+        timestamp: Date.now(),
+        resolved: false,
       };
       alerts.unshift(alert);
-      if (alerts.length > 20) alerts.pop();
+      if (alerts.length > 50) alerts.pop();
+      // Push real-time to connected clients
+      io.emit('new_alert', alert);
     }
   });
 }
@@ -98,11 +157,23 @@ app.get('/api/trust/:nodeAddr', (req, res) => {
 });
 
 app.get('/api/attacks', (req, res) => {
-  res.json(alerts);
+  const { severity, type, limit = 50 } = req.query;
+  let result = [...alerts];
+  if (severity) result = result.filter(a => a.severity === severity);
+  if (type)     result = result.filter(a => a.type === type);
+  res.json(result.slice(0, Number(limit)));
 });
 
 app.get('/api/blockchain', (req, res) => {
   res.json(blockchainBlocks);
+});
+
+app.get('/api/transactions', (req, res) => {
+  const { action, nodeId, limit = 100 } = req.query;
+  let result = [...txLog];
+  if (action) result = result.filter(t => t.action === action);
+  if (nodeId) result = result.filter(t => t.nodeId === nodeId);
+  res.json(result.slice(0, Number(limit)));
 });
 
 app.get('/api/trust-scores', (req, res) => {
