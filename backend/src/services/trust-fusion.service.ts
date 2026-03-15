@@ -102,15 +102,16 @@ export class TrustFusionService {
     try {
       if (!blockchainService.trustLedgerContract) return;
 
-      const tx = await blockchainService.trustLedgerContract.updateTrustScore(nodeAddress, fusionScore, attackType);
-      await tx.wait();
-
+      // ⚖️ ONLY update blockchain ledger for anomalies / security events
       if (fusionScore < this.ANOMALY_THRESHOLD) {
+        const tx = await blockchainService.trustLedgerContract.updateTrustScore(nodeAddress, fusionScore, attackType);
+        await tx.wait();
+
         console.log(`[TrustFusion] 🚨 ANOMALY DETECTED for ${nodeAddress} (Score: ${fusionScore})`);
-        
-        // Also trigger report explicitly if needed
         const reportTx = await blockchainService.trustLedgerContract.reportAnomaly(nodeAddress, `Consistently low trust score (Model: ${attackType})`);
         await reportTx.wait();
+      } else {
+        console.log(`[TrustFusion] ✅ Normal trust score for ${nodeAddress} (${fusionScore}) - Cached locally`);
       }
     } catch (e: any) {
       console.error(`[TrustFusion] Error updating ledger for ${nodeAddress}:`, e.message);
