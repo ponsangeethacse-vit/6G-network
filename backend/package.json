@@ -7,7 +7,6 @@
     "dev": "nodemon src/server.js"
   },
   "dependencies": {
-    "@tensorflow/tfjs": "^4.22.0",
     "cors": "^2.8.6",
     "dotenv": "^16.6.1",
     "ethers": "^6.16.0",
