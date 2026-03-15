@@ -196,6 +196,53 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'healthy', simulator: 'running', maliciousMode });
 });
 
+// ─── Admin Node Actions ────────────────────────────────────────────────────────
+// GET single node detail
+app.get('/api/nodes/:addr', (req, res) => {
+  const { addr } = req.params;
+  const node = MOCK_NODES.find(n => n.address === addr);
+  if (!node) return res.status(404).json({ error: 'Node not found' });
+  const score = trustScores[addr] ?? 85;
+  const status = score >= 70 ? 'trusted' : score >= 40 ? 'suspicious' : 'malicious';
+  res.json({ ...node, trustScore: score, status });
+});
+
+// POST: Isolate a node (set trust score to 0, mine block)
+app.post('/api/nodes/:addr/isolate', (req, res) => {
+  const { addr } = req.params;
+  if (!MOCK_NODES.find(n => n.address === addr)) return res.status(404).json({ error: 'Node not found' });
+  trustScores[addr] = 0;
+  mineBlock(addr, 0, 'Node Isolated');
+  io.emit('trust_update', { node: addr, trustScore: 0, isMaliciousMode: maliciousMode });
+  io.emit('node_action', { addr, action: 'isolated', trustScore: 0, timestamp: Date.now() });
+  res.json({ success: true, addr, action: 'isolated', trustScore: 0 });
+});
+
+// POST: Restore a node (reset trust to 80, mine block)
+app.post('/api/nodes/:addr/restore', (req, res) => {
+  const { addr } = req.params;
+  if (!MOCK_NODES.find(n => n.address === addr)) return res.status(404).json({ error: 'Node not found' });
+  trustScores[addr] = 80;
+  mineBlock(addr, 80, 'Node Recovered');
+  io.emit('trust_update', { node: addr, trustScore: 80, isMaliciousMode: maliciousMode });
+  io.emit('node_action', { addr, action: 'restored', trustScore: 80, timestamp: Date.now() });
+  res.json({ success: true, addr, action: 'restored', trustScore: 80 });
+});
+
+// POST: Update trust score manually
+app.post('/api/nodes/:addr/trust', (req, res) => {
+  const { addr } = req.params;
+  const { score } = req.body;
+  if (!MOCK_NODES.find(n => n.address === addr)) return res.status(404).json({ error: 'Node not found' });
+  const clamped = Math.max(0, Math.min(100, Number(score)));
+  if (isNaN(clamped)) return res.status(400).json({ error: 'Invalid score' });
+  trustScores[addr] = clamped;
+  mineBlock(addr, clamped, 'Trust Score Updated');
+  io.emit('trust_update', { node: addr, trustScore: clamped, isMaliciousMode: maliciousMode });
+  io.emit('node_action', { addr, action: 'trust_updated', trustScore: clamped, timestamp: Date.now() });
+  res.json({ success: true, addr, action: 'trust_updated', trustScore: clamped });
+});
+
 app.post('/api/simulator/toggle', (req, res) => {
   maliciousMode = !maliciousMode;
   console.log(`[Simulator] Malicious mode: ${maliciousMode}`);
