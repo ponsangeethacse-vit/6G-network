@@ -69,6 +69,18 @@ export class TrafficSimulatorService {
         responseTimeMs = 10;
         success = true; // look fine
         peerFeedback = 0.0; // severe reputation penalty triggers anomaly
+      } else if (attack === 'PacketFlooding') {
+        packetSize = 800;
+        packetRate = 800; // extremely high rate
+        responseTimeMs = 2000;
+        success = false;
+        peerFeedback = 0.1;
+      } else if (attack === 'Suspicious') {
+        packetSize = Math.floor(Math.random() * 1000 + 400);
+        packetRate = Math.floor(Math.random() * 60 + 30); // elevated
+        responseTimeMs = Math.floor(Math.random() * 100 + 100);
+        success = Math.random() > 0.4; // degrades
+        peerFeedback = 0.5;
       }
 
       // 1. Module 1: Role ID

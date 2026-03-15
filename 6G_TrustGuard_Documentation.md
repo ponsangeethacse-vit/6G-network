@@ -10,34 +10,44 @@ This system monitors network nodes in real-time, computes a **Fusion Trust Score
 
 ## 2. System Architecture
 
-The project is structured into three distinct layers:
+```mermaid
+graph TD
+    A[React Dashboard] -->|REST / Socket.io| B[Node.js API]
+    B -->|REST| C[Python AI Service]
+    D[Blockchain Contracts] --- B
+    B -.->|Temporary Cache| E[(MongoDB)]
+
+    classDef tech fill:#1e1e24,stroke:#555,stroke-width:1px,color:#fff;
+    class A,B,C,D,E tech;
+```
+
+The project is structured into primary layers communicating synchronously:
 
 ### 🔬 **A. Backend (Control Layer)**
 - **Runtime**: Node.js & Express.
-- **WebSocket Gateway**: `Socket.io` enables true real-time synchronization, piping node states to the 3D frontend canvas every 2-3 seconds.
-- **Service Integration**: Calls the Python AI service via REST API for anomaly detection and scoring.
-- **Database**: MongoDB for historical logging and visual caching of nodes.
+- **WebSocket Gateway**: `Socket.io` enables true real-time synchronization, piping node states to the graph canvas every 2-3 seconds.
+- **Integration**: Coordinates Python AI REST hooks and forwards anomaly events onto the Hardhat local node interface.
 
 ### 🧠 **B. AI Microservice (Python)**
 - **Framework**: FastAPI (Uvicorn).
+- **Core Engine**: `scikit-learn` / `TensorFlow` algorithms estimating trust weights.
 - **Endpoints**:
   - **`POST /predict-attack`**: Classifies node traffic into Normal, DDoS, or Sybil.
-  - **`POST /calculate-trust`**: Computes weighted **Fusion Trust Score** from Direct, Historical, Reputation, and Context vectors.
+  - **`POST /calculate-trust`**: Computes weighted **Fusion Trust Score**.
 
-### 🌐 **B. Frontend (Visualization & Monitoring)**
-- **Framework**: React 18 (built with Vite for speed).
-- **3D Visualizer**: **Three.js / React Three Fiber**
-  - Displays nodes as a 3D mesh network topology.
-  - Nodes change colors dynamically (Green = Trusted, Red = Anomalous/Blocked).
-- **Analytics**: **Recharts** charts map trust decay over time, historical trends, and bandwidth/latency metrics.
-- **Web3 Interface**: Connection hooks ready for wallet integrations (e.g., MetaMask) to sign anomaly reports.
+### 🌐 **C. Frontend (Visualization & Monitoring)**
+- **Framework**: React 18 (built with Vite).
+- **Visualizer**: **Cytoscape.js**
+  - Displays nodes as lighter research-appropriate network topology grids.
+  - Nodes change colors dynamically (Green = Trusted, Yellow = Suspicious, Red = Anomalous).
+- **Analytics**: **Chart.js** mapped for transaction streams.
 
-### ⛓️ **C. Blockchain (Security & Ledger)**
+### ⛓️ **D. Blockchain (Security & Ledger)**
 - **Framework**: Hardhat (Solidity `^0.8.28`).
-- **Smart Contracts**:
-  1. **`NodeRegistry.sol`**: Records legal node profile addresses and roles (`DataRequester`, `ServiceProvider`, `Communicator`).
-  2. **`TrustLedger.sol`**: The active scoring grid.
-     - Logs `fusionTrustScore` immutably.
+- **Contracts**:
+  1. **`NodeRegistry.sol`**: Records node profiles and communicator roles.
+  2. **`TrustLedger.sol`**: 
+     - Logs `fusionTrustScore` immutably on alerts triggers.
      - **Auto-Revocation Logic**: If the backend pushes a trust score below the **Anomaly Threshold** (default: 60), the contract automatically emits an `AccessRevoked` event and flags the node as blocked.
 
 ---
@@ -58,8 +68,8 @@ The project is structured into three distinct layers:
 
 | Feature | Description |
 | :--- | :--- |
-| **3D Live Mesh Topology** | Real-time viz of 100+ simulated wireless nodes communicating together. |
-| **Live Attack Injection** | Allows dashboard triggers for **DDoS** or **Sybil** storms to test defense latency. |
+| **Live Network Topology Graph** | Real-time viz of simulated wireless nodes communicating together (Cytoscape.js). |
+| **Live Attack Injection** | Allows dashboard triggers for **DDoS**, **Sybil**, or **DataManipulation** to test defense thresholds. |
 | **Trust Ledger Explorer** | Custom UI node showing live blocks indexing on-chain node state locks. |
 | **Dynamic Role assignment** | Handles shifting authorization states (Unknown vs Authorized routers). |
 
@@ -78,7 +88,8 @@ The principles designed into **6G TrustGuard** extend to several high-value sect
 
 ## 6. Technical Stack Checklist
 
-- **Frontend**: `React 18`, `Typescript`, `Vite`, `Three.js`, `Charts.js / Recharts`, `Axios`.
+- **Frontend**: `React 18`, `Typescript`, `Vite`, `Cytoscape.js`, `Bootstrap`, `Chart.js`, `Axios`.
 - **Backend**: `Node.js`, `Express`, `Socket.io`, `Ethers.js (v6)`.
-- **AI Microservice**: `Python 3.10+`, `FastAPI`, `Uvicorn`, `Pydantic`.
-- **Blockchain**: `Solidity`, `Hardhat`, `EtherJS` interaction nodes.
+- **AI Microservice**: `Python 3.10+`, `FastAPI`, `scikit-learn` / `TensorFlow`.
+- **Blockchain**: `Solidity`, `Hardhat`, `Ethers.js` interactions.
+- **Database**: `MongoDB` (enabling provisional 1H expiring visual cache logs).

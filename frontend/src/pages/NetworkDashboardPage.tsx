@@ -2,6 +2,11 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Row, Col, Card, Badge, Spinner, Button } from 'react-bootstrap';
 import CytoscapeComponent from 'react-cytoscapejs';
 import { io } from 'socket.io-client';
+import { Line } from 'react-chartjs-2';
+import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend } from 'chart.js';
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
+
 import axios from 'axios';
 import {
   Server, Smartphone, Cpu, Activity, Shield,
@@ -17,7 +22,7 @@ interface NetworkNode {
   address: string;
   role: number;
   trustScore?: number;   // 0–100
-  status?: 'trusted' | 'suspicious' | 'malicious';
+  status?: 'trusted' | 'suspicious' | 'malicious' | 'isolated';
 }
 
 interface TxRecord {
@@ -76,11 +81,12 @@ const getRoleIcon = (role?: number, size = 18) => {
 };
 
 const StatusBadge = ({ status }: { status?: NetworkNode['status'] }) => {
-  const map = { trusted: 'success', suspicious: 'warning', malicious: 'danger' };
+  const map = { trusted: 'success', suspicious: 'warning', malicious: 'danger', isolated: 'secondary' };
   const icons = {
     trusted: <ShieldCheck size={12} className="me-1" />,
     suspicious: <ShieldAlert size={12} className="me-1" />,
     malicious: <ShieldOff size={12} className="me-1" />,
+    isolated: <ShieldOff size={12} className="me-1" />
   };
   const s = status ?? 'trusted';
   return (
@@ -167,6 +173,25 @@ const NetworkDashboardPage = () => {
   const localScores                 = useRef<Record<string, number>>({});
   const [simAttack, setSimAttack]   = useState<string>('DDoS');
   const [loadingAttack, setLoadingAttack] = useState<boolean>(false);
+  const [analyticsData, setAnalyticsData] = useState<{ time: string; avgTrust: number; alerts: number; maliciousNodes: number }[]>([]);
+
+  // ── Analytics continuous intervals calculations ──
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setAnalyticsData(prev => {
+        const avg = nodes.reduce((sum, n) => sum + (n.trustScore || 0), 0) / (nodes.length || 1);
+        const maliciousCount = nodes.filter(n => (n.trustScore || 0) < 40).length;
+        const alerts = txLog.filter(t => t.action?.includes('Detected') || t.action?.includes('Revoked')).length;
+        const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+        const nextData = [...prev, { time: now, avgTrust: Math.round(avg), alerts, maliciousNodes: maliciousCount }];
+        if (nextData.length > 8) return nextData.slice(1);
+        return nextData;
+      });
+    }, 4000); // 4 seconds density
+
+    return () => clearInterval(interval);
+  }, [nodes, txLog]);
 
   // ── Build stable Cytoscape elements ────────────────────────────────────
   const buildElements = useCallback((ns: NetworkNode[]) => {
@@ -328,17 +353,57 @@ const NetworkDashboardPage = () => {
 
   const elements = buildElements(nodes);
   const scoreColor = (score?: number) =>
-    !score ? 'secondary' : score >= 70 ? 'success' : score >= 40 ? 'warning' : 'danger';
+    !score ? 'secondary' : score >= 60 ? 'success' : score >= 40 ? 'warning' : 'danger';
+
+  // Stats
+  const totalAttacks = txLog.filter(t => t.action?.includes('Revoked') || t.action?.includes('Detected')).length;
+  const underAttackNodes = nodes.filter(n => n.status === 'malicious' || n.status === 'suspicious' || (n.trustScore && n.trustScore < 60)).length;
+  const isolatedNodes = nodes.filter(n => n.status === 'isolated').length;
+
+  // ── Chart Config ──
+  const chartData = {
+    labels: analyticsData.map(d => d.time),
+    datasets: [
+      {
+        label: 'Avg Trust',
+        data: analyticsData.map(d => d.avgTrust),
+        borderColor: '#0284c7', // Sky Blue
+        backgroundColor: 'rgba(2, 132, 199, 0.1)',
+        tension: 0.3,
+        borderWidth: 2,
+        pointRadius: 1,
+      },
+      {
+        label: 'Alerts',
+        data: analyticsData.map(d => d.alerts),
+        borderColor: '#ea580c', // Orange
+        backgroundColor: 'rgba(234, 88, 12, 0.1)',
+        tension: 0.2,
+        borderWidth: 1.5,
+        pointRadius: 1,
+      }
+    ]
+  };
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { grid: { display: false }, ticks: { color: '#64748b', font: { size: 8 } } },
+      y: { grid: { color: 'rgba(255,255,255,0.03)' }, ticks: { color: '#64748b', font: { size: 8 }, min: 0 } }
+    }
+  };
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <div>
       {/* Header */}
-      <div className="d-flex align-items-center justify-content-between mb-4">
+      <div className="d-flex align-items-center justify-content-between mb-3">
         <div>
           <h4 className="text-light fw-bold mb-1">Network Topology</h4>
           <p className="text-secondary small mb-0">
-            Live 6G mesh visualization — click a node to inspect details
+            Live 6G mesh visualization — click nodes to inspect details
           </p>
         </div>
         <div className="d-flex align-items-center gap-2">
@@ -348,18 +413,63 @@ const NetworkDashboardPage = () => {
             { color: '#ffc107', label: 'Suspicious' },
             { color: '#dc3545', label: 'Malicious' },
           ].map(({ color, label }) => (
-            <div key={label} className="d-flex align-items-center gap-1" style={{ fontSize: '11px' }}>
-              <div className="rounded-circle" style={{ width: 10, height: 10, backgroundColor: color, flexShrink: 0 }} />
-              <span className="text-secondary">{label}</span>
+            <div key={label} className="d-flex align-items-center gap-1">
+              <div className="rounded-circle" style={{ width: 8, height: 8, backgroundColor: color }} />
+              <span className="text-secondary" style={{ fontSize: '11px' }}>{label}</span>
             </div>
           ))}
         </div>
       </div>
 
+      {/* 📊 Top Stats Header Row */}
+      <Row className="mb-4 g-3">
+        <Col md={4}>
+          <Card bg="dark" border="danger" className="border-opacity-25 shadow-sm">
+            <Card.Body className="d-flex align-items-center gap-3">
+              <div className="rounded-circle bg-danger bg-opacity-10 p-3">
+                <ShieldAlert size={22} className="text-danger" />
+              </div>
+              <div>
+                <p className="text-secondary small mb-1">Total Attacks</p>
+                <h4 className="text-light fw-bold mb-0">{totalAttacks}</h4>
+              </div>
+            </Card.Body>
+          </Card>
+        </Col>
+        <Col md={4}>
+          <Card bg="dark" border="warning" className="border-opacity-25 shadow-sm">
+            <Card.Body className="d-flex align-items-center gap-3">
+              <div className="rounded-circle bg-warning bg-opacity-10 p-3">
+                <Activity size={22} className="text-warning" />
+              </div>
+              <div>
+                <p className="text-secondary small mb-1">Nodes Under Attack</p>
+                <h4 className="text-light fw-bold mb-0">{underAttackNodes}</h4>
+              </div>
+            </Card.Body>
+          </Card>
+        </Col>
+        <Col md={4}>
+          <Card bg="dark" border="success" className="border-opacity-25 shadow-sm">
+            <Card.Body className="d-flex align-items-center gap-3">
+              <div className="rounded-circle bg-success bg-opacity-10 p-3">
+                <ShieldCheck size={22} className="text-success" />
+              </div>
+              <div>
+                <p className="text-secondary small mb-1">Nodes Isolated / Secure</p>
+                <h4 className="text-light fw-bold mb-0">
+                  {nodes.length > 0 ? nodes.filter(n => (n.trustScore || 0) >= 60).length : 0}
+                </h4>
+              </div>
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
+
       <Row className="g-3">
         {/* ── Graph ── */}
         <Col lg={selected ? 8 : 12} style={{ transition: 'all 0.3s ease' }}>
-          <Card bg="dark" border="secondary" className="shadow-lg overflow-hidden" style={{ height: '580px' }}>
+          <Card bg="dark" border="secondary" className="shadow-lg overflow-hidden mb-3" style={{ height: '380px' }}>
             <Card.Body className="p-0 position-relative">
               {loading ? (
                 <div className="h-100 d-flex align-items-center justify-content-center text-secondary">
@@ -392,11 +502,45 @@ const NetworkDashboardPage = () => {
               )}
             </Card.Body>
           </Card>
+
+          {/* 🚨 Live Security Alerts Feed */}
+          <Card bg="dark" border="danger" className="border-opacity-10 shadow-sm" style={{ height: '185px' }}>
+            <Card.Header className="bg-transparent border-bottom border-secondary border-opacity-10 py-2 d-flex align-items-center justify-content-between">
+              <div className="d-flex align-items-center gap-2">
+                <ShieldAlert size={15} className="text-danger" />
+                <span className="fw-semibold text-light" style={{ fontSize: '12px', letterSpacing: '0.5px' }}>LIVE SECURITY ALERTS</span>
+              </div>
+              <Badge bg="danger" pill style={{ fontSize: '10px' }}>
+                {txLog.filter(t => t.action?.includes('Revoked') || t.action?.includes('Detected') || t.action?.includes('Suspicious')).length} Active
+              </Badge>
+            </Card.Header>
+            <Card.Body className="overflow-auto py-2">
+              <div className="d-flex flex-column gap-1">
+                {txLog.filter(t => t.action?.includes('Revoked') || t.action?.includes('Detected') || t.action?.includes('Suspicious')).length === 0 ? (
+                  <div className="text-center text-secondary py-3 small opacity-50">No critical anomalies detected</div>
+                ) : (
+                  txLog.filter(t => t.action?.includes('Revoked') || t.action?.includes('Detected') || t.action?.includes('Suspicious')).map(alert => (
+                    <div key={alert.txHash} className="d-flex align-items-center justify-content-between p-2 rounded bg-danger bg-opacity-10 border-start border-danger border-3">
+                      <div className="d-flex align-items-center gap-2">
+                        <Badge bg={alert.action?.includes('Revoked') ? 'danger' : 'warning'} className="text-uppercase" style={{ fontSize: '9px' }}>
+                          {alert.action?.includes('Revoked') ? 'REVOKED' : 'ALERT'}
+                        </Badge>
+                        <span className="text-light small" style={{ fontSize: '11px' }}>
+                          {alert.nodeId?.slice(0,6)}: <span className="text-secondary">{alert.action}</span>
+                        </span>
+                      </div>
+                      <span className="text-secondary" style={{ fontSize: '10px' }}>{new Date(alert.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Card.Body>
+          </Card>
         </Col>
 
-        {/* ── Side Panel ── */}
-        {selected && (
-          <Col lg={4} style={{ transition: 'all 0.3s ease' }}>
+        {/* ── Side Panel / Live Analytics ── */}
+        <Col lg={4} style={{ transition: 'all 0.3s ease' }}>
+          {selected ? (
             <Card bg="dark" border="secondary" className="shadow-lg" style={{ height: '580px', overflowY: 'auto' }}>
               <Card.Header className="bg-black bg-opacity-25 border-bottom border-secondary p-3 d-flex align-items-center justify-content-between">
                 <span className="text-secondary text-uppercase fw-semibold" style={{ fontSize: '12px', letterSpacing: '1px' }}>
@@ -540,8 +684,49 @@ const NetworkDashboardPage = () => {
 
               </Card.Body>
             </Card>
-          </Col>
-        )}
+          ) : (
+            <Card bg="dark" border="secondary" className="shadow-lg overflow-hidden" style={{ height: '580px' }}>
+              <Card.Header className="bg-black bg-opacity-25 border-bottom border-secondary p-3 d-flex align-items-center gap-2">
+                <Activity size={16} className="text-info" />
+                <span className="text-secondary text-uppercase fw-semibold" style={{ fontSize: '11px', letterSpacing: '1px' }}>
+                  Live Network Analytics
+                </span>
+              </Card.Header>
+              <Card.Body className="p-3 d-flex flex-column" style={{ height: 'calc(100% - 100px)' }}>
+                <div style={{ height: '230px' }} className="mb-3">
+                  {analyticsData.length > 0 ? (
+                    <Line data={chartData} options={chartOptions} />
+                  ) : (
+                    <div className="h-100 d-flex align-items-center justify-content-center text-secondary opacity-50 small">
+                       Buffering live analytics telemetry…
+                    </div>
+                  )}
+                </div>
+
+                <div className="d-flex flex-column gap-2 mt-auto">
+                   <div className="p-3 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 shadow-sm">
+                      <span className="text-secondary small d-block mb-1">Average Trust Score</span>
+                      <h4 className="text-info fw-bold mb-0">
+                        {analyticsData.length > 0 ? analyticsData[analyticsData.length - 1].avgTrust : '--'}%
+                      </h4>
+                   </div>
+                   <div className="p-3 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 shadow-sm">
+                      <span className="text-secondary small d-block mb-1">Total Network Alerts</span>
+                      <h4 className="text-warning fw-bold mb-0">
+                        {analyticsData.length > 0 ? analyticsData[analyticsData.length - 1].alerts : '--'}
+                      </h4>
+                   </div>
+                   <div className="p-3 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 shadow-sm">
+                      <span className="text-secondary small d-block mb-1">Active Malicious Nodes</span>
+                      <h4 className="text-danger fw-bold mb-0">
+                        {analyticsData.length > 0 ? analyticsData[analyticsData.length - 1].maliciousNodes : '--'}
+                      </h4>
+                   </div>
+                </div>
+              </Card.Body>
+            </Card>
+          )}
+        </Col>
       </Row>
     </div>
   );

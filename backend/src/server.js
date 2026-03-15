@@ -86,9 +86,13 @@ async function runSimulatorTick() {
     const attack = activeAttacks[node.address] || 'Normal';
     const attacking = attack !== 'Normal';
 
-    // Compute trust score change
-    let delta = (Math.random() * 6) - 2; // -2 to +4 normally
-    if (attacking) delta = -(Math.random() * 18 + 12); // sharp drop during attack
+    // Compute trust score change (Deltas setup)
+    let delta = Math.floor(Math.random() * 2) + 1; // +1 to +2 normally
+    if (attack === 'Suspicious') {
+      delta = -(Math.floor(Math.random() * 11) + 10); // -10 to -20
+    } else if (attacking) {
+      delta = -(Math.floor(Math.random() * 21) + 40); // -40 to -60
+    }
 
     const prev = trustScores[node.address] ?? 85;
     const newScore = Math.max(0, Math.min(100, Math.round(prev + delta)));
@@ -112,6 +116,14 @@ async function runSimulatorTick() {
       packetRate = 4;
       packetSize = 100;
       responseTimeMs = 10; // Manipulated low latency
+    } else if (attack === 'PacketFlooding') {
+      packetRate = 800; // extremely high rate
+      packetSize = 800;
+      responseTimeMs = 2000;
+    } else if (attack === 'Suspicious') {
+      packetRate = Math.floor(Math.random() * 60 + 30); // elevated traffic
+      packetSize = Math.floor(Math.random() * 1000 + 400);
+      responseTimeMs = Math.floor(Math.random() * 100 + 100);
     }
 
     // Emit trust_update matching the shape TrustDashboard expects
@@ -125,11 +137,21 @@ async function runSimulatorTick() {
     });
 
     // Mine a block with the appropriate action type
-    if (Math.random() < 0.35) {
-      let action = 'Trust Score Updated';
-      if (newScore < 30)       action = 'Node Isolated';
-      else if (newScore < 60)  action = 'Attack Detected';
-      else if (prev < 60 && newScore >= 60) action = 'Node Recovered';
+    let action = 'Trust Score Updated';
+    let shouldMine = Math.random() < 0.25; // limit normal spam
+
+    if (newScore < 40) {
+      action = 'Node Access Revoked';
+      shouldMine = true; // Always record anomaly
+    } else if (newScore < 60) {
+      action = 'Suspicious Behavior Detected';
+      shouldMine = true;
+    } else if (prev < 60 && newScore >= 60) {
+      action = 'Node Recovered';
+      shouldMine = true;
+    }
+
+    if (shouldMine) {
       mineBlock(node.address, newScore, action);
     }
 
@@ -144,9 +166,11 @@ async function runSimulatorTick() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             packet_rate: packetRate,
-            latency: attacking ? 600 : 40,
+            latency: responseTimeMs,
             failed_requests: attacking ? 50 : 3,
-            connection_attempts: attacking ? 10 : 2
+            connection_attempts: attacking ? 12 : 2,
+            bandwidth_usage: packetSize * packetRate,
+            authentication_failures: (attack === 'Sybil') ? 15 : (attacking ? 3 : 0)
           })
         });
 
@@ -321,8 +345,33 @@ const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {
   console.log(`\n✅ Backend running on http://localhost:${PORT}`);
   console.log('✅ 6G Simulator starting...\n');
+  
   // Start simulator immediately
   setInterval(runSimulatorTick, 2000);
+
+  // 🎲 Stochastic Attack Generator (Every 5-10 seconds)
+  setInterval(() => {
+    const node = MOCK_NODES[Math.floor(Math.random() * MOCK_NODES.length)].address;
+    const rand = Math.random();
+    
+    if (rand < 0.10) { // 10% Malicious
+      const attacks = ['DDoS', 'Sybil', 'DataManipulation', 'PacketFlooding'];
+      const chosen = attacks[Math.floor(Math.random() * attacks.length)];
+      activeAttacks[node] = chosen;
+      console.log(`[Stochastic] 🎲 Spontaneous Attack [${chosen}] initiated on ${node.slice(0,6)}`);
+      io.emit('simulator_mode', { node, attackType: chosen, isMaliciousMode: true });
+    } else if (rand < 0.30) { // 20% Suspicious
+      activeAttacks[node] = 'Suspicious';
+      console.log(`[Stochastic] 🎲 Spontaneous [Suspicious] state set on ${node.slice(0,6)}`);
+      io.emit('simulator_mode', { node, attackType: 'Suspicious', isMaliciousMode: true });
+    } else { // 70% Normal
+      if (activeAttacks[node]) {
+        delete activeAttacks[node];
+        console.log(`[Stochastic] 🛡️ Node ${node.slice(0,6)} returned to Normal`);
+        io.emit('simulator_mode', { node, attackType: 'Normal', isMaliciousMode: false });
+      }
+    }
+  }, Math.floor(Math.random() * 5000) + 5000);
 });
 
 // ─── Optional: Try MongoDB (non-blocking) ─────────────────────────────────────

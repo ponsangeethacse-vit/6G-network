@@ -11,6 +11,8 @@ class AttackMetrics(BaseModel):
     latency: float                # Response time in ms
     failed_requests: int          # Count of failures
     connection_attempts: int     # Count of node connections
+    bandwidth_usage: float        # Bytes/sec
+    authentication_failures: int # Count of auth failures
 
 class TrustMetrics(BaseModel):
     behavioral_trust: float       # 0.0 to 1.0 (Direct interaction quality)
@@ -31,20 +33,20 @@ def predict_attack(metrics: AttackMetrics):
     """
     try:
         # 🧪 Heuristics proxy for ML classification (e.g., Random Forest / Logistic)
-        if metrics.failed_requests > 30 or metrics.packet_rate > 800:
+        if metrics.failed_requests > 30 or metrics.packet_rate > 800 or metrics.bandwidth_usage > 50000:
             return {
                 "classification": "DDoS",
                 "risk_score": 85.0,
                 "confidence": 0.92,
-                "message": "🚨 High packet rate or failed requests flag prospective DDoS vector."
+                "message": "🚨 High packet rate or bandwidth utilization flags prospective DDoS vector."
             }
         
-        if metrics.connection_attempts > 15 or metrics.latency > 500:
+        if metrics.connection_attempts > 15 or metrics.latency > 500 or metrics.authentication_failures > 8:
             return {
                 "classification": "Sybil",
                 "risk_score": 75.0,
                 "confidence": 0.81,
-                "message": "⚠️ High connection frequency or latency suggests Sybil spoofing."
+                "message": "⚠️ High connection frequency or auth failures suggest Sybil identity spoofing."
             }
 
         return {
