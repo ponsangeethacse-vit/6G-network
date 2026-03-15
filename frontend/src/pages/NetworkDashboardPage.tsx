@@ -8,7 +8,7 @@ import {
   Clock, Fingerprint, Database, Wifi
 } from 'lucide-react';
 
-const API_BASE   = 'http://localhost:4000/api';
+import { NodeService, TransactionService } from '../services/api.service';
 const SOCKET_URL = 'http://localhost:4000';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -21,6 +21,7 @@ interface NetworkNode {
 
 interface TxRecord {
   blockId: number;
+  nodeId: string;
   action: string;
   txHash: string;
   timestamp: number;
@@ -119,6 +120,8 @@ const makeCyStylesheet = (nodes: NetworkNode[]) => {
         'background-color': '#0d6efd',
         'text-outline-color': '#0a0a0c',
         'text-outline-width': 2,
+        'text-wrap': 'wrap',
+        'text-max-width': 80,
         'transition-property': 'background-color border-color',
         'transition-duration': '0.4s' as any,
       },
@@ -192,13 +195,10 @@ const NetworkDashboardPage = () => {
   // ── Fetch nodes + transactions ──────────────────────────────────────────
   const fetchData = useCallback(async () => {
     try {
-      const [nodesRes, txRes] = await Promise.all([
-        fetch(`${API_BASE}/nodes`),
-        fetch(`${API_BASE}/transactions?limit=50`),
+      const [nodesData, txData] = await Promise.all([
+        NodeService.getNodes().then(r => r.nodes ?? []),
+        TransactionService.getTransactions({ limit: 50 }),
       ]);
-
-      const nodesData = nodesRes.ok ? (await nodesRes.json()).nodes ?? [] : [];
-      const txData: TxRecord[] = txRes.ok ? await txRes.json() : [];
 
       const enriched: NetworkNode[] = nodesData.map((n: any) => {
         const score = localScores.current[n.address] ?? 85;
@@ -206,7 +206,7 @@ const NetworkDashboardPage = () => {
       });
 
       setNodes(enriched);
-      setTxLog(txData);
+      setTxLog(txData as any);
       setLoading(false);
     } catch (e) {
       console.error(e);

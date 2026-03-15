@@ -10,7 +10,8 @@ import {
   RefreshCw, Database, Lock, Unlock, Sliders, Search
 } from 'lucide-react';
 
-const API_BASE   = 'http://localhost:4000/api';
+import { NodeService, TrustService, TransactionService } from '../services/api.service';
+
 const SOCKET_URL = 'http://localhost:4000';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -199,16 +200,13 @@ const NodeManagementPanelPage = () => {
   // ── Fetch ─────────────────────────────────────────────────────────────
   const fetchNodes = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/nodes`);
-      const data = await res.json();
+      const data = await NodeService.getNodes();
       const raw = data.nodes ?? [];
 
-      const [tsRes, txRes] = await Promise.all([
-        fetch(`${API_BASE}/trust-scores`),
-        fetch(`${API_BASE}/transactions?limit=100`),
+      const [tsData, txData] = await Promise.all([
+        TrustService.getTrustScores().catch(() => []),
+        TransactionService.getTransactions({ limit: 100 }).catch(() => []),
       ]);
-      const tsData = tsRes.ok ? await tsRes.json() : [];
-      const txData = txRes.ok ? await txRes.json() : [];
 
       // Map trust scores by address
       const tsMap: Record<string, number> = {};
@@ -217,7 +215,7 @@ const NodeManagementPanelPage = () => {
       // Map last activity by address
       const actMap: Record<string, number> = {};
       txData.forEach((t: any) => {
-        if (!actMap[t.nodeId] || t.timestamp > actMap[t.nodeId]) actMap[t.nodeId] = t.timestamp;
+        if (!actMap[t.nodeId] || t.timestamp > actMap[t.nodeId]) actMap[t.nodeId] = Number(t.timestamp);
       });
 
       const enriched: ManagedNode[] = raw.map((n: any) => {
@@ -279,8 +277,7 @@ const NodeManagementPanelPage = () => {
   const handleIsolate = async (node: ManagedNode) => {
     setNodeState(node.address, 'loading');
     try {
-      const res = await fetch(`${API_BASE}/nodes/${node.address}/isolate`, { method: 'POST' });
-      if (!res.ok) throw new Error();
+      await NodeService.isolateNode(node.address);
       showToast(`Node ${node.address.slice(2, 6).toUpperCase()} isolated successfully`);
     } catch {
       setNodeState(node.address, 'error');
@@ -291,8 +288,7 @@ const NodeManagementPanelPage = () => {
   const handleRestore = async (node: ManagedNode) => {
     setNodeState(node.address, 'loading');
     try {
-      const res = await fetch(`${API_BASE}/nodes/${node.address}/restore`, { method: 'POST' });
-      if (!res.ok) throw new Error();
+      await NodeService.restoreNode(node.address);
       showToast(`Node ${node.address.slice(2, 6).toUpperCase()} restored`, 'success');
     } catch {
       setNodeState(node.address, 'error');
@@ -303,12 +299,7 @@ const NodeManagementPanelPage = () => {
   const handleUpdateTrust = async (addr: string, score: number) => {
     setNodeState(addr, 'loading');
     try {
-      const res = await fetch(`${API_BASE}/nodes/${addr}/trust`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ score }),
-      });
-      if (!res.ok) throw new Error();
+      await NodeService.updateTrustScore(addr, score);
       showToast(`Trust score updated to ${score}%`);
     } catch {
       setNodeState(addr, 'error');
@@ -319,8 +310,7 @@ const NodeManagementPanelPage = () => {
   const handleViewChain = async (node: ManagedNode) => {
     setSelectedNode(node);
     try {
-      const res = await fetch(`${API_BASE}/transactions?nodeId=${node.address}&limit=20`);
-      const data = res.ok ? await res.json() : [];
+      const data = await TransactionService.getTransactions({ nodeId: node.address, limit: 20 });
       setChainRecords(data);
     } catch { setChainRecords([]); }
     setChainModal(true);

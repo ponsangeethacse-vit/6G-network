@@ -6,7 +6,8 @@ import {
   Activity, Filter, RefreshCw, CheckCircle2, Clock, Cpu
 } from 'lucide-react';
 
-const API_BASE   = 'http://localhost:4000/api';
+import { AttackService } from '../services/api.service';
+
 const SOCKET_URL = 'http://localhost:4000';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -125,9 +126,7 @@ const AttackDetectionMonitorPage = () => {
   // ── Fetch existing alerts via REST ────────────────────────────────────────
   const fetchAlerts = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/attacks?limit=50`);
-      if (!res.ok) throw new Error();
-      const data: Alert[] = await res.json();
+      const data = await AttackService.getAttacks({ limit: 50 });
       setAlerts(prev => {
         // Merge — keep local resolve state
         const resolved = new Set(prev.filter(a => a.resolved).map(a => a.id));

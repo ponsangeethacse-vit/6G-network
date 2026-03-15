@@ -40,7 +40,8 @@ import {
 //
 // ─────────────────────────────────────────────────────────────────────────────
 
-const API_BASE   = 'http://localhost:4000/api';
+import { TransactionService } from '../services/api.service';
+
 const SOCKET_URL = 'http://localhost:4000';
 
 type ActionType = 'All' | 'Trust Score Updated' | 'Attack Detected' | 'Node Isolated' | 'Node Recovered';
@@ -122,10 +123,8 @@ const BlockchainTransactionViewerPage = () => {
   // ── REST fetch ────────────────────────────────────────────────────────────
   const fetchTxs = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/transactions?limit=100`);
-      if (!res.ok) throw new Error();
-      const data: Transaction[] = await res.json();
-      setTxs(data);
+      const data = await TransactionService.getTransactions({ limit: 100 });
+      setTxs(data as any); // Cast if type definitions slightly mismatch in properties like nodeLabel
       setLast(new Date());
     } catch {
       /* backend may still be warming up */

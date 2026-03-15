@@ -12,7 +12,7 @@ const Web3ConnectionWidget: React.FC = () => {
   const { status, error, connectMetaMask, connectLocalNode, disconnect } = useWeb3();
   const wallet = useWalletStatus();
   const [showModal, setShowModal]   = useState(false);
-  const [nodeUrl, setNodeUrl]       = useState(WEB3_CONFIG.providers.hardhat);
+  const [nodeUrl, setNodeUrl]       = useState<string>(WEB3_CONFIG.providers.hardhat);
   const [connecting, setConnecting] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 

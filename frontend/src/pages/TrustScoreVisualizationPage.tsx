@@ -21,7 +21,7 @@ ChartJS.register(
   Title, Tooltip, Legend, Filler
 );
 
-const API_BASE = 'http://localhost:4000/api';
+import { TrustService, NodeService } from '../services/api.service';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface TrustNode {
@@ -38,6 +38,9 @@ interface HistoryPoint {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const classify = (score: number): TrustNode['status'] =>
   score > 0.7 ? 'trusted' : score >= 0.4 ? 'suspicious' : 'malicious';
+  
+const formatAddress = (addr: string) => 
+  addr.startsWith('0x') ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
 
 const barColor = (score: number) =>
   score > 0.7 ? 'rgba(25, 135, 84, 0.85)' : score >= 0.4 ? 'rgba(255, 193, 7, 0.85)' : 'rgba(220, 53, 69, 0.85)';
@@ -101,12 +104,10 @@ const TrustScoreVisualizationPage = () => {
   // ── Fetch /api/trust-scores ──────────────────────────────────────────────
   const fetchScores = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/trust-scores`);
-      if (!res.ok) throw new Error('API not ready');
-      const raw: any[] = await res.json();
+      const raw = await TrustService.getTrustScores();
 
       const fetched: TrustNode[] = raw.map(n => ({
-        nodeId: n.nodeId ?? n.address ?? `Node-${Math.random().toString(36).slice(2,6)}`,
+        nodeId: n.address ?? `Node-${Math.random().toString(36).slice(2,6)}`,
         trustScore: typeof n.trustScore === 'number'
           ? (n.trustScore > 1 ? n.trustScore / 100 : n.trustScore)
           : 0.85,
@@ -129,8 +130,7 @@ const TrustScoreVisualizationPage = () => {
     } catch {
       // Fallback: generate plausible mock data from /api/nodes
       try {
-        const res2 = await fetch(`${API_BASE}/nodes`);
-        const data = await res2.json();
+        const data = await NodeService.getNodes();
         const rawNodes = data.nodes ?? data ?? [];
 
         const fetched: TrustNode[] = rawNodes.map((n: any, i: number) => {
@@ -180,7 +180,7 @@ const TrustScoreVisualizationPage = () => {
   );
 
   const barData = {
-    labels: sorted.map(n => n.nodeId),
+    labels: sorted.map(n => formatAddress(n.nodeId)),
     datasets: [{
       label: 'Trust Score',
       data: sorted.map(n => n.trustScore),
@@ -199,7 +199,7 @@ const TrustScoreVisualizationPage = () => {
   const lineData = {
     labels: timeLabels,
     datasets: nodeIds.map((id, i) => ({
-      label: id,
+      label: formatAddress(id),
       data: history.map(h => h.scores[id] ?? null),
       borderColor: LINE_COLORS[i % LINE_COLORS.length].border,
       backgroundColor: LINE_COLORS[i % LINE_COLORS.length].bg,
@@ -359,7 +359,7 @@ const TrustScoreVisualizationPage = () => {
                   return (
                     <tr key={node.nodeId}>
                       <td className="text-secondary small px-4 py-2">{idx + 1}</td>
-                      <td className="font-monospace small py-2 text-light">{node.nodeId}</td>
+                      <td className="font-monospace small py-2 text-light">{formatAddress(node.nodeId)}</td>
                       <td className={`fw-bold py-2 text-${col}`}>{pct}%</td>
                       <td className="py-2" style={{ minWidth: '140px' }}>
                         <div className="bg-secondary bg-opacity-25 rounded-pill" style={{ height: '6px', overflow: 'hidden' }}>
