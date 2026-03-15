@@ -1,5 +1,6 @@
 import { roleIdentificationService } from './role-identification.service';
 import { trustFusionService } from './trust-fusion.service';
+import { mlEngineService } from './ml-engine.service';
 import EventEmitter from 'events';
 
 export const simulatorEvents = new EventEmitter();
@@ -69,8 +70,16 @@ export class TrafficSimulatorService {
       });
       trustFusionService.recordPeerFeedback(node, peerFeedback);
 
-      // 3. Trigger Trust Calculation & Fusion
-      const score = await trustFusionService.computeTrust(node);
+      // 3. Trigger AI Attack Prediction
+      const attackType = await mlEngineService.predictAttack({
+        packet_rate: packetRate,
+        latency: responseTimeMs,
+        failed_requests: success ? 0 : 35, // Simulate triggers
+        connection_attempts: 1
+      });
+
+      // 4. Trigger Trust Calculation & Fusion
+      const score = await trustFusionService.computeTrust(node, attackType);
 
       // Emit for WebSockets (Dashboard)
       simulatorEvents.emit('traffic_tick', {
@@ -79,6 +88,7 @@ export class TrafficSimulatorService {
         packetRate,
         isMaliciousMode: this.maliciousMode,
         trustScore: score,
+        attackType // optional forward
       });
     }
   }

@@ -66,7 +66,7 @@ export class TrustFusionService {
     return sum / feedbacks.length;
   }
 
-  async computeTrust(nodeAddress: string): Promise<number | null> {
+  async computeTrust(nodeAddress: string, attackType: string = "Normal"): Promise<number | null> {
     const behavioral = this.calculateDirectTrust(nodeAddress);
     const reputation = this.calculateIndirectTrust(nodeAddress);
     
@@ -93,23 +93,23 @@ export class TrustFusionService {
     }
 
     // Write to Blockchain and check anomaly
-    await this.updateBlockchainLedger(nodeAddress, fusionScore);
+    await this.updateBlockchainLedger(nodeAddress, fusionScore, attackType);
 
     return fusionScore;
   }
 
-  private async updateBlockchainLedger(nodeAddress: string, fusionScore: number) {
+  private async updateBlockchainLedger(nodeAddress: string, fusionScore: number, attackType: string) {
     try {
       if (!blockchainService.trustLedgerContract) return;
 
-      const tx = await blockchainService.trustLedgerContract.updateTrustScore(nodeAddress, fusionScore);
+      const tx = await blockchainService.trustLedgerContract.updateTrustScore(nodeAddress, fusionScore, attackType);
       await tx.wait();
 
       if (fusionScore < this.ANOMALY_THRESHOLD) {
         console.log(`[TrustFusion] 🚨 ANOMALY DETECTED for ${nodeAddress} (Score: ${fusionScore})`);
         
         // Also trigger report explicitly if needed
-        const reportTx = await blockchainService.trustLedgerContract.reportAnomaly(nodeAddress, "Consistently low trust score detected by ML Fusion");
+        const reportTx = await blockchainService.trustLedgerContract.reportAnomaly(nodeAddress, `Consistently low trust score (Model: ${attackType})`);
         await reportTx.wait();
       }
     } catch (e: any) {

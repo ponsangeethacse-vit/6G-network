@@ -45,6 +45,25 @@ export class MLEngineService {
     let predictedNext = recent[recent.length - 1] + trend;
     return Math.max(0, Math.min(100, predictedNext));
   }
+
+  // Predict attack classification based on network traffic metrics
+  async predictAttack(metrics: { packet_rate: number, latency: number, failed_requests: number, connection_attempts: number }): Promise<string> {
+    try {
+      const response = await fetch(`${PYTHON_AI_URL}/predict-attack`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(metrics)
+      });
+
+      if (!response.ok) throw new Error(`Python AI Microservice responded with status: ${response.status}`);
+      const data = await response.json();
+      return data.classification;
+      
+    } catch (e: any) {
+      console.error('[MLEngine] Error predicting attack type:', e.message);
+      return 'Normal'; // Fallback
+    }
+  }
 }
 
 export const mlEngineService = new MLEngineService();

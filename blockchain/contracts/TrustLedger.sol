@@ -13,12 +13,22 @@ contract TrustLedger {
         bool isBlocked;
     }
 
+    struct TrustRecord {
+        address nodeId;
+        uint256 fusionTrustScore;
+        string attackType;
+        uint256 timestamp;
+        bool isBlocked;
+    }
+
     mapping(address => TrustData) public trustScores;
+    mapping(address => TrustRecord[]) public trustHistory;
     
     uint256 public anomalyThreshold = 60; // < 0.6 is suspicious
 
     event TrustUpdated(address indexed node, uint256 newScore);
     event AnomalyReported(address indexed node, string reason, uint256 score);
+    event AttackDetected(address indexed node, string attackType, uint256 score);
     event AccessRevoked(address indexed node);
     event AccessRestored(address indexed node);
 
@@ -32,17 +42,29 @@ contract TrustLedger {
         registry = NodeRegistry(_registryAddress);
     }
 
-    function updateTrustScore(address _node, uint256 _newScore) external onlyOwner {
+    function updateTrustScore(address _node, uint256 _newScore, string calldata _attackType) external onlyOwner {
         require(registry.isNodeRegistered(_node), "Node is not registered in Registry");
         require(_newScore <= 100, "Score must be <= 100");
 
         trustScores[_node].fusionTrustScore = _newScore;
         trustScores[_node].lastUpdated = block.timestamp;
 
+        // Record history
+        trustHistory[_node].push(TrustRecord({
+            nodeId: _node,
+            fusionTrustScore: _newScore,
+            attackType: _attackType,
+            timestamp: block.timestamp,
+            isBlocked: trustScores[_node].isBlocked
+        }));
+
         emit TrustUpdated(_node, _newScore);
 
-        if (_newScore < anomalyThreshold && !trustScores[_node].isBlocked) {
-            _revokeAccess(_node, "Trust score fell below threshold");
+        if (_newScore < anomalyThreshold) {
+            emit AttackDetected(_node, _attackType, _newScore);
+            if (!trustScores[_node].isBlocked) {
+                _revokeAccess(_node, "Trust score fell below threshold");
+            }
         } else if (_newScore >= anomalyThreshold && trustScores[_node].isBlocked) {
             _restoreAccess(_node);
         }
