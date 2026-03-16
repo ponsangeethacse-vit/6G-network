@@ -29,9 +29,14 @@ app.use('/api/admin/transfers', transfersRouter);
 const MOCK_NODES = Array.from({ length: 20 }, (_, i) => {
   const hex = (i + 1).toString(16).padStart(40, '0');
   let role = 1; // Default IoT
-  if (i >= 14 && i < 17) role = 2; // High Traffic (Base Station proxy)
-  else if (i >= 17 && i < 19) role = 3; // Unstable (Relay proxy)
-  return { address: `0x${hex}`, role };
+  if (i >= 14 && i < 17) role = 2; // Base Station proxy
+  else if (i >= 17 && i < 19) role = 3; // Relay proxy
+
+  let profile = 'Normal';
+  if (i < 2) profile = 'Malicious';       // First 2 nodes (10%)
+  else if (i < 6) profile = 'Suspicious';  // Next 4 nodes (20%)
+
+  return { address: `0x${hex}`, role, profile };
 });
 
 // ─── In-Memory Trust & Blockchain State ───────────────────────────────────────
@@ -99,8 +104,8 @@ let simulationRunning = false;
 let autoPacketTimeout = null;
 
 function scheduleNextPacket() {
-  // Random delay between 3000ms and 5000ms
-  const delay = 3000 + Math.floor(Math.random() * 2001);
+  // Random delay between 2000ms and 3000ms
+  const delay = 2000 + Math.floor(Math.random() * 1001);
   autoPacketTimeout = setTimeout(() => {
     if (!simulationRunning) return;
     generateAutoPacket();
@@ -178,70 +183,80 @@ function stopAutoPackets() {
 // ─── Simulator ────────────────────────────────────────────────────────────────
 async function runSimulatorTick() {
   for (const node of MOCK_NODES) {
-    const attack = activeAttacks[node.address] || 'Normal';
-    const attacking = attack !== 'Normal';
+    let activeAttack = activeAttacks[node.address] || 'Normal';
+    
+    // 🔮 Apply behavior profile activation chances
+    if (node.profile === 'Suspicious' && Math.random() < 0.35) {
+      activeAttack = 'Suspicious';
+    } else if (node.profile === 'Malicious' && Math.random() < 0.25) {
+      const heavy = ['DDoS', 'Sybil', 'DataManipulation', 'PacketFlooding'];
+      activeAttack = heavy[Math.floor(Math.random() * heavy.length)];
+    }
 
-    // 1. Generate metrics shape matching pipeline expect inputs
-    let packetRate = Math.floor(Math.random() * 20 + 1);
-    let packetSize = Math.floor(Math.random() * 500 + 100);
-    let responseTimeMs = Math.floor(Math.random() * 80 + 20);
+    const attacking = activeAttack !== 'Normal';
+
+    // 📈 Base rates with stochastic noise
+    let packetRate = 12 + Math.floor(Math.random() * 21) - 10;     // rand(-10, 10)
+    let responseTimeMs = 50 + Math.floor(Math.random() * 11) - 5;  // rand(-5, 5)
+    let packetSize = 300 + Math.floor(Math.random() * 17) - 8;     // rand(-8, 8)
     let authFailures = 0;
     let channelQuality = 0.95; // nominal
 
-    // 🛡️ Added: Signal metrics for physical layer auth
-    const correctProfile = physicalAuth.getCorrectProfile(node.address);
-    let providedRf = correctProfile ? correctProfile.rfFingerprint : 'RF_UNKNOWN';
-    let providedCsi = 0.85;
-    let providedSnr = 25.0;
+        // Apply attack profile modifiers
+        if (activeAttack === 'DDoS') {
+          packetRate = 500 + Math.floor(Math.random() * 50);
+          responseTimeMs = 1500 + Math.floor(Math.random() * 100);
+          packetSize = 5000;
+        } else if (activeAttack === 'Sybil') {
+          packetRate = 80 + Math.floor(Math.random() * 10);
+          authFailures = 5;
+        } else if (activeAttack === 'Suspicious') {
+          packetRate = 45 + Math.floor(Math.random() * 15);
+          channelQuality = 0.75; 
+        } else if (activeAttack === 'DataManipulation') {
+          packetRate = 4 + Math.floor(Math.random() * 3);
+        } else if (activeAttack === 'PacketFlooding') {
+          packetRate = 800 + Math.floor(Math.random() * 100);
+        }
 
-    // 🧠 Added: Model Update Gradient Metrics
-    let gradient_magnitude = Number((Math.random() * 0.25 + 0.1).toFixed(3));
-    let loss_change = Number((Math.random() * 0.1 - 0.05).toFixed(3));
-    let update_variance = Number((Math.random() * 0.04).toFixed(3));
-    let parameter_drift = Number((Math.random() * 0.02).toFixed(3));
+        // 🛡️ Added: Signal metrics for physical layer auth
+        const correctProfile = physicalAuth.getCorrectProfile(node.address);
+        let providedRf = correctProfile ? correctProfile.rfFingerprint : 'RF_UNKNOWN';
+        let providedCsi = 0.85;
+        let providedSnr = 25.0;
 
-    // Apply attack profiles
-    if (attack === 'DDoS') {
-      packetRate = 500;
-      packetSize = 5000;
-      responseTimeMs = 1500;
-    } else if (attack === 'Sybil') {
-      packetRate = 80;
-      packetSize = 250;
-      authFailures = 5;
-      providedRf = `RF_SPOOF_${Math.floor(Math.random() * 1000)}`;
-    } else if (attack === 'DataManipulation') {
-      packetRate = 4;
-      packetSize = 100;
-    } else if (attack === 'PacketFlooding') {
-      packetRate = 800;
-    } else if (attack === 'Suspicious') {
-      packetRate = 45;
-      channelQuality = 0.75; 
-      providedCsi = 0.60;
-    } else if (attack === 'PoisonedGradients') {
-      gradient_magnitude = 0.85;
-      loss_change = 0.60;
-      update_variance = 0.45;
-    } else if (attack === 'DelayedUpdate') {
-      responseTimeMs = 2500;
-      packetRate = 1; 
-    } else if (attack === 'CoordinatedAttack') {
-      gradient_magnitude = 0.90; // High Poison
-    }
+        if (activeAttack === 'Sybil') {
+          providedRf = `RF_SPOOF_${Math.floor(Math.random() * 1000)}`;
+        } else if (activeAttack === 'Suspicious') {
+          providedCsi = 0.60;
+        }
+
+        // 🧠 Added: Model Update Gradient Metrics
+        let gradient_magnitude = Number((Math.random() * 0.25 + 0.1).toFixed(3));
+        let loss_change = Number((Math.random() * 0.1 - 0.05).toFixed(3));
+        let update_variance = Number((Math.random() * 0.04).toFixed(3));
+        let parameter_drift = Number((Math.random() * 0.02).toFixed(3));
+
+        if (activeAttack === 'PoisonedGradients') {
+          gradient_magnitude = 0.85 + Math.random() * 0.1;
+        } else if (activeAttack === 'CoordinatedAttack') {
+          gradient_magnitude = 0.90 + Math.random() * 0.08;
+        }
 
     const currentMetrics = {
       packet_rate: packetRate,
       latency: responseTimeMs,
       bandwidth_usage: packetSize * packetRate,
       failed_requests: attacking ? 12 : 1,
-      connection_attempts: (attack === 'Sybil') ? 22 : 4,
+      connection_attempts: (activeAttack === 'Sybil') ? 22 : 4,
+      authentication_attempts: (activeAttack === 'Sybil') ? 22 : 4,
       authentication_failures: authFailures,
       channel_quality: channelQuality,
       rfFingerprint: providedRf,
       csiBehavior: providedCsi,
       snr: providedSnr,
       gradient_magnitude,
+      model_update_magnitude: gradient_magnitude,
       loss_change,
       update_variance,
       parameter_drift
@@ -266,7 +281,8 @@ async function runSimulatorTick() {
         // Reject and Isolate Immediately
         isAnomalous = true;
         classification = 'Spoofed Identity';
-        finalScore = Math.max(0, previousScore - 30); // Penalty
+        const evidence = 0; // Absolute fail
+        finalScore = Math.round((0.8 * previousScore) + (0.2 * evidence));
         pipelineStages = [
            { stage: "Physical Auth Pre-Filter (Backend)", success: false, details: authStatus.reason }
         ];
@@ -286,7 +302,8 @@ async function runSimulatorTick() {
 
           if (response.ok) {
             const aiData = await response.json();
-            finalScore     = aiData.final_trust_score;
+            const evidence = aiData.final_trust_score; 
+            finalScore = Math.round((0.8 * previousScore) + (0.2 * evidence));
             pipelineStages = [
                 { stage: "Physical Auth Pre-Filter (Backend)", success: true, details: "Passed credentials match" },
                 ...aiData.pipeline_stages
@@ -298,8 +315,10 @@ async function runSimulatorTick() {
           }
         } catch (e) {
           // AI Service offline fallback heuristics
-          let delta = (attacking ? -20 : +2);
-          finalScore = Math.max(0, Math.min(100, Math.round(previousScore + delta)));
+          let evidence = (attacking ? 0 : 100);
+          if (activeAttack === 'Suspicious') evidence = 50;
+    // Apply attack profile modifiers
+          finalScore = Math.round((0.8 * previousScore) + (0.2 * evidence));
           isAnomalous = attacking;
           classification = attacking ? 'Fallback Attack' : 'Normal';
           pipelineStages = [
@@ -318,9 +337,10 @@ async function runSimulatorTick() {
       packetRate,
       isMaliciousMode: attacking,
       trustScore: finalScore,
-      attackType: attack,
+      attackType: activeAttack,
       classification: classification,
-      pipelineStages: pipelineStages // Added for frontend panel
+      pipelineStages: pipelineStages,
+      metrics: currentMetrics
     });
 
     // 6. Blockchain Smart Contract Enforcement (Enabler condition)
@@ -416,6 +436,10 @@ function processPacketsSim() {
       if (newPath.length < 2) {
         console.log(`[Routing] ❌ Destination ${pkt.dst.slice(2, 6).toUpperCase()} UNREACHABLE from ${current_node.slice(2, 6).toUpperCase()}.`);
         io.emit('packet_dropped', { packetId: pkt.id, node: current_node, reason: 'unreachable_or_low_trust' });
+        
+        // ⛓️ Log Dropped on Current Node local blockchain
+        localBlockchainService.getNodeBlockchain(current_node).mineBlock(pkt.id, 'packet_dropped', pkt.src, pkt.dst);
+
         activePackets.splice(i, 1);
         continue;
       }

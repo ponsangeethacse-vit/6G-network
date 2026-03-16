@@ -24,6 +24,7 @@ interface NetworkNode {
   trustScore?: number;   // 0–100
   status?: 'healthy' | 'suspicious' | 'under_investigation' | 'malicious' | 'isolated';
   pipelineStages?: any[];
+  metrics?: any; // Added for live update displays
 }
 
 interface TxRecord {
@@ -236,19 +237,30 @@ const NetworkDashboardPage = () => {
   const localScores                 = useRef<Record<string, number>>({});
   const [simAttack, setSimAttack]   = useState<string>('DDoS');
   const [loadingAttack, setLoadingAttack] = useState<boolean>(false);
-  const [analyticsData, setAnalyticsData] = useState<{ time: string; avgTrust: number; alerts: number; maliciousNodes: number }[]>([]);
+  const [analyticsData, setAnalyticsData] = useState<{ 
+    time: string; 
+    avgTrust: number; 
+    alerts: number; 
+    maliciousNodes: number;
+    packetRate: number;
+    latency: number;
+  }[]>([]);
   const [simRunning, setSimRunning]   = useState<boolean>(false);
   const [simPackets, setSimPackets]   = useState<number>(0);
   const [simMsg, setSimMsg]           = useState<string>('');
+  const [packetEvents, setPacketEvents] = useState<any[]>([]);
 
   // ── Analytics continuous intervals calculations ──
   useEffect(() => {
     const tick = () => {
       setAnalyticsData(prev => {
         const avg = nodes.reduce((sum, n) => sum + (n.trustScore || 0), 0) / (nodes.length || 1);
-        const maliciousCount = nodes.filter(n => (n.trustScore || 0) < 40).length;
+        const maliciousCount = nodes.filter(n => (n.trustScore || 0) < 40 || n.status === 'malicious').length;
         
-        // Rolling 60s frequency
+        const metricNodes = nodes.filter(n => n.metrics);
+        const avgRate = metricNodes.length ? metricNodes.reduce((sum, n) => sum + (n.metrics.packet_rate || 0), 0) / metricNodes.length : 0;
+        const avgLatency = metricNodes.length ? metricNodes.reduce((sum, n) => sum + (n.metrics.latency || 0), 0) / metricNodes.length : 0;
+
         const nowMs = Date.now();
         const alertsRate = txLog.filter(t => {
           if (!t.timestamp) return false;
@@ -257,8 +269,15 @@ const NetworkDashboardPage = () => {
 
         const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-        const nextData = [...prev, { time: now, avgTrust: Math.round(avg), alerts: alertsRate, maliciousNodes: maliciousCount }];
-        if (nextData.length > 8) return nextData.slice(1);
+        const nextData = [...prev, { 
+          time: now, 
+          avgTrust: Math.round(avg), 
+          alerts: alertsRate, 
+          maliciousNodes: maliciousCount,
+          packetRate: Math.round(avgRate * 10) / 10,
+          latency: Math.round(avgLatency)
+        }];
+        if (nextData.length > 30) return nextData.slice(1);
         return nextData;
       });
     };
@@ -324,15 +343,44 @@ const NetworkDashboardPage = () => {
   // ── Socket: live trust updates ──────────────────────────────────────────
   useEffect(() => {
     const socket = io(SOCKET_URL);
+    const appendBlockLocal = (addr: string, packetId: number, eventType: string, src: string, dst: string) => {
+      setSelected(prev => {
+        if (!prev || prev.node.address !== addr) return prev;
+        const curChain = prev.localBlockchain || [];
+        const mockBlock = {
+          index: curChain.length,
+          timestamp: Date.now(),
+          nodeId: addr,
+          packetId,
+          eventType,
+          sourceNode: src,
+          destinationNode: dst,
+          hash: 'live_' + Math.random().toString(16).slice(2, 8)
+        };
+        return { ...prev, localBlockchain: [...curChain, mockBlock] };
+      });
+    };
 
-    socket.on('trust_update', (tick: { node: string; trustScore: number }) => {
+    const appendEvent = (type: string, data: any) => {
+      setPacketEvents(prev => [{
+        id: Date.now() + Math.random(),
+        eventType: type,
+        packetId: data.packetId,
+        src: data.src,
+        dst: data.dst,
+        node: data.node,
+        timestamp: Date.now()
+      }, ...prev].slice(0, 30));
+    };
+
+    socket.on('trust_update', (tick: any) => {
       localScores.current[tick.node] = tick.trustScore;
       const status = classify(tick.trustScore);
 
       setNodes(prev =>
         prev.map(n =>
           n.address === tick.node
-            ? { ...n, trustScore: tick.trustScore, status }
+            ? { ...n, trustScore: tick.trustScore, status, metrics: tick.metrics || n.metrics }
             : n
         )
       );
@@ -351,17 +399,23 @@ const NetworkDashboardPage = () => {
       // Update selected panel if this is the selected node
       setSelected(prev => {
         if (!prev || prev.node.address !== tick.node) return prev;
-        const updated = { ...prev.node, trustScore: tick.trustScore, status };
+        const updated = { ...prev.node, trustScore: tick.trustScore, status, pipelineStages: tick.pipelineStages || prev.node.pipelineStages, metrics: tick.metrics || prev.node.metrics };
         const activity = [
           `${new Date().toLocaleTimeString()} — Trust updated to ${tick.trustScore}%`,
           ...prev.activity,
         ].slice(0, 6);
         return { ...prev, node: updated, activity };
       });
+
+      appendEvent('trust_updated', { node: tick.node, packetId: Math.round(tick.trustScore) });
     });
 
     socket.on('new_transaction', (tx: TxRecord) => {
       setTxLog(prev => [tx, ...prev].slice(0, 50));
+    });
+
+    socket.on('new_alert', (data: any) => {
+      appendEvent('node_isolated', { node: data.nodeId, packetId: data.severity });
     });
 
     const animatePacket = (path: string[]) => {
@@ -410,40 +464,27 @@ const NetworkDashboardPage = () => {
       setSimRunning(data.running);
     });
 
-    const appendBlockLocal = (addr: string, packetId: number, eventType: string, src: string, dst: string) => {
-      setSelected(prev => {
-        if (!prev || prev.node.address !== addr) return prev;
-        const curChain = prev.localBlockchain || [];
-        const mockBlock = {
-          index: curChain.length,
-          timestamp: Date.now(),
-          nodeId: addr,
-          packetId,
-          eventType,
-          sourceNode: src,
-          destinationNode: dst,
-          hash: 'live_' + Math.random().toString(16).slice(2, 8)
-        };
-        return { ...prev, localBlockchain: [...curChain, mockBlock] };
-      });
-    };
 
     socket.on('packet_sent', (data: any) => {
       setSimPackets(prev => prev + 1);
       if (data.path) animatePacket(data.path);
       appendBlockLocal(data.src, data.packetId, 'packet_sent', data.src, data.dst);
+      appendEvent('sent', data);
     });
 
     socket.on('packet_forwarded', (data: any) => {
       appendBlockLocal(data.node, data.packetId, 'packet_forwarded', data.src, data.dst);
+      appendEvent('forwarded', data);
     });
 
     socket.on('packet_delivered', (data: any) => {
       appendBlockLocal(data.dst, data.packetId, 'packet_received', data.src, data.dst);
+      appendEvent('delivered', data);
     });
 
     socket.on('packet_dropped', (data: any) => {
       appendBlockLocal(data.node, data.packetId, 'packet_blocked', data.src, data.dst);
+      appendEvent('dropped', data);
     });
 
     socket.on('simulation_stats', (data: { activePackets: number; totalGenerated: number }) => {
@@ -570,29 +611,25 @@ const NetworkDashboardPage = () => {
   const isolatedNodes = nodes.filter(n => n.status === 'isolated').length;
 
   // ── Chart Config ──
-  const chartData = {
+  // ── Separate Chart Configs for Grid Layout ──
+  const createChartData = (label: string, dataKey: string, color: string, colorBg: string) => ({
     labels: analyticsData.map(d => d.time),
-    datasets: [
-      {
-        label: 'Avg Trust',
-        data: analyticsData.map(d => d.avgTrust),
-        borderColor: '#0284c7', // Sky Blue
-        backgroundColor: 'rgba(2, 132, 199, 0.1)',
-        tension: 0.3,
-        borderWidth: 2,
-        pointRadius: 1,
-      },
-      {
-        label: 'Attacks / Min',
-        data: analyticsData.map(d => d.alerts),
-        borderColor: '#ea580c', // Orange
-        backgroundColor: 'rgba(234, 88, 12, 0.1)',
-        tension: 0.2,
-        borderWidth: 1.5,
-        pointRadius: 1,
-      }
-    ]
-  };
+    datasets: [{
+      label,
+      data: analyticsData.map((d: any) => d[dataKey] || 0),
+      borderColor: color,
+      backgroundColor: colorBg,
+      tension: 0.3,
+      borderWidth: 1.5,
+      pointRadius: 0,
+      fill: true
+    }]
+  });
+
+  const trustChart   = createChartData('Avg Trust', 'avgTrust', '#0284c7', 'rgba(2, 132, 199, 0.05)');
+  const rateChart    = createChartData('Packet Rate', 'packetRate', '#10b981', 'rgba(16, 185, 129, 0.05)');
+  const latencyChart = createChartData('Latency (ms)', 'latency', '#8b5cf6', 'rgba(139, 92, 246, 0.05)');
+  const alertChart   = createChartData('Attacks / Min', 'alerts', '#ea580c', 'rgba(234, 88, 12, 0.05)');
 
   const chartOptions = {
     responsive: true,
@@ -755,39 +792,90 @@ const NetworkDashboardPage = () => {
             </Card.Body>
           </Card>
 
-          {/* 🚨 Live Security Alerts Feed */}
-          <Card bg="dark" border="danger" className="border-opacity-10 shadow-sm" style={{ height: '185px' }}>
-            <Card.Header className="bg-transparent border-bottom border-secondary border-opacity-10 py-2 d-flex align-items-center justify-content-between">
-              <div className="d-flex align-items-center gap-2">
-                <ShieldAlert size={15} className="text-danger" />
-                <span className="fw-semibold text-light" style={{ fontSize: '12px', letterSpacing: '0.5px' }}>LIVE SECURITY ALERTS</span>
-              </div>
-              <Badge bg="danger" pill style={{ fontSize: '10px' }}>
-                {txLog.filter(t => t.action?.includes('Revoked') || t.action?.includes('Detected') || t.action?.includes('Suspicious')).length} Active
-              </Badge>
-            </Card.Header>
-            <Card.Body className="overflow-auto py-2">
-              <div className="d-flex flex-column gap-1">
-                {txLog.filter(t => t.action?.includes('Revoked') || t.action?.includes('Detected') || t.action?.includes('Suspicious')).length === 0 ? (
-                  <div className="text-center text-secondary py-3 small opacity-50">No critical anomalies detected</div>
-                ) : (
-                  txLog.filter(t => t.action?.includes('Revoked') || t.action?.includes('Detected') || t.action?.includes('Suspicious')).map(alert => (
-                    <div key={alert.txHash} className="d-flex align-items-center justify-content-between p-2 rounded bg-danger bg-opacity-10 border-start border-danger border-3">
-                      <div className="d-flex align-items-center gap-2">
-                        <Badge bg={alert.action?.includes('Revoked') ? 'danger' : 'warning'} className="text-uppercase" style={{ fontSize: '9px' }}>
-                          {alert.action?.includes('Revoked') ? 'REVOKED' : 'ALERT'}
-                        </Badge>
-                        <span className="text-light small" style={{ fontSize: '11px' }}>
-                          {alert.nodeId?.slice(0,6)}: <span className="text-secondary">{alert.action}</span>
-                        </span>
-                      </div>
-                      <span className="text-secondary" style={{ fontSize: '10px' }}>{new Date(alert.timestamp).toLocaleTimeString()}</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </Card.Body>
-          </Card>
+          {/* 🛰️ Live Packet Event & Security Feed Row */}
+          <Row className="g-3 mt-1">
+            <Col md={6}>
+              {/* 🚨 Live Security Alerts Feed */}
+              <Card bg="dark" border="danger" className="border-opacity-10 shadow-sm" style={{ height: '185px' }}>
+                <Card.Header className="bg-transparent border-bottom border-secondary border-opacity-10 py-2 d-flex align-items-center justify-content-between">
+                  <div className="d-flex align-items-center gap-2">
+                    <ShieldAlert size={15} className="text-danger" />
+                    <span className="fw-semibold text-light" style={{ fontSize: '11px', letterSpacing: '0.5px' }}>LIVE SECURITY ALERTS</span>
+                  </div>
+                  <Badge bg="danger" pill style={{ fontSize: '10px' }}>
+                    {txLog.filter(t => t.action?.includes('Revoked') || t.action?.includes('Detected') || t.action?.includes('Suspicious')).length} Active
+                  </Badge>
+                </Card.Header>
+                <Card.Body className="overflow-auto py-2">
+                  <div className="d-flex flex-column gap-1">
+                    {txLog.filter(t => t.action?.includes('Revoked') || t.action?.includes('Detected') || t.action?.includes('Suspicious')).length === 0 ? (
+                      <div className="text-center text-secondary py-3 small opacity-50">No critical anomalies detected</div>
+                    ) : (
+                      txLog.filter(t => t.action?.includes('Revoked') || t.action?.includes('Detected') || t.action?.includes('Suspicious')).map(alert => (
+                        <div key={alert.txHash} className="d-flex align-items-center justify-content-between p-2 rounded bg-danger bg-opacity-10 border-start border-danger border-3">
+                          <div className="d-flex align-items-center gap-2">
+                            <Badge bg={alert.action?.includes('Revoked') ? 'danger' : 'warning'} className="text-uppercase" style={{ fontSize: '9px' }}>
+                              {alert.action?.includes('Revoked') ? 'REVOKED' : 'ALERT'}
+                            </Badge>
+                            <span className="text-light small" style={{ fontSize: '11px' }}>
+                              {alert.nodeId?.slice(0,6)}: <span className="text-secondary">{alert.action}</span>
+                            </span>
+                          </div>
+                          <span className="text-secondary" style={{ fontSize: '10px' }}>{new Date(alert.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </Card.Body>
+              </Card>
+            </Col>
+
+            <Col md={6}>
+              {/* 🛰️ Live Packet Event Feed */}
+              <Card bg="dark" border="info" className="border-opacity-10 shadow-sm" style={{ height: '185px' }}>
+                <Card.Header className="bg-transparent border-bottom border-secondary border-opacity-10 py-2 d-flex align-items-center justify-content-between">
+                  <div className="d-flex align-items-center gap-2">
+                    <Activity size={15} className="text-info" />
+                    <span className="fw-semibold text-light" style={{ fontSize: '11px', letterSpacing: '0.5px' }}>LIVE PACKET EVENT FEED</span>
+                  </div>
+                  <Badge bg="info" pill style={{ fontSize: '10px' }}>
+                    {packetEvents.length} Recent
+                  </Badge>
+                </Card.Header>
+                <Card.Body className="overflow-auto py-2">
+                  <div className="d-flex flex-column gap-1">
+                    {packetEvents.length === 0 ? (
+                      <div className="text-center text-secondary py-3 small opacity-50">No recent packet activity</div>
+                    ) : (
+                      packetEvents.map(event => (
+                        <div key={event.id} className={`d-flex align-items-center justify-content-between p-2 rounded bg-${event.eventType === 'dropped' ? 'danger' : event.eventType === 'delivered' ? 'success' : 'secondary'} bg-opacity-10 border-start border-${event.eventType === 'dropped' ? 'danger' : event.eventType === 'delivered' ? 'success' : 'info'} border-3`}>
+                          <div className="d-flex align-items-center gap-2">
+                            <Badge bg={
+                              event.eventType === 'sent' ? 'primary' :
+                              event.eventType === 'forwarded' ? 'dark' :
+                              event.eventType === 'delivered' ? 'success' : 'danger'
+                            } className="text-uppercase" style={{ fontSize: '8px' }}>
+                              {event.eventType}
+                            </Badge>
+                            <span className="text-light small" style={{ fontSize: '11px', lineHeight: '1.2' }}>
+                              Packet <span className="text-info">#{event.packetId}</span>: 
+                              <span className="text-secondary ms-1">
+                                {event.eventType === 'sent' ? `${event.src?.slice(-4)} → ${event.dst?.slice(-4)}` :
+                                 event.eventType === 'forwarded' ? `at ${event.node?.slice(-4)}` :
+                                 event.eventType === 'delivered' ? `Delivered to ${event.dst?.slice(-4)}` :
+                                 `Dropped at ${event.node?.slice(-4)}`}
+                              </span>
+                            </span>
+                          </div>
+                          <span className="text-secondary" style={{ fontSize: '10px' }}>{new Date(event.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </Card.Body>
+              </Card>
+            </Col>
+          </Row>
         </Col>
 
         {/* ── Side Panel / Live Analytics ── */}
@@ -906,6 +994,91 @@ const NetworkDashboardPage = () => {
                     </div>
                   );
                 })()}
+
+                {/* 📈 Live Node Metrics */}
+                {selected.node.metrics && (
+                  <div className="pt-3 border-top border-secondary border-opacity-25 mt-2">
+                    <p className="text-secondary mb-2 d-flex align-items-center gap-1 small" style={{ letterSpacing: '0.5px' }}>
+                      <Activity size={13} className="text-info" /> DYNAMIC NODE METRICS
+                    </p>
+                    <div className="row row-cols-2 g-2">
+                      <div className="col">
+                        <div className="p-2 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 text-center">
+                          <span className="text-secondary d-block mb-1" style={{ fontSize: '10px' }}>Packet Rate</span>
+                          <h6 className="text-light fw-bold mb-0" style={{ fontSize: '12px' }}>{selected.node.metrics.packet_rate} /s</h6>
+                        </div>
+                      </div>
+                      <div className="col">
+                        <div className="p-2 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 text-center">
+                          <span className="text-secondary d-block mb-1" style={{ fontSize: '10px' }}>Latency</span>
+                          <h6 className="text-light fw-bold mb-0" style={{ fontSize: '12px' }}>{selected.node.metrics.latency} ms</h6>
+                        </div>
+                      </div>
+                      <div className="col">
+                        <div className="p-2 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 text-center">
+                          <span className="text-secondary d-block mb-1" style={{ fontSize: '10px' }}>Bandwidth</span>
+                          <h6 className="text-light fw-bold mb-0" style={{ fontSize: '11px' }}>{(selected.node.metrics.bandwidth_usage / 1024).toFixed(1)} KB/s</h6>
+                        </div>
+                      </div>
+                      <div className="col">
+                        <div className="p-2 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 text-center">
+                          <span className="text-secondary d-block mb-1" style={{ fontSize: '10px' }}>Model Gradient</span>
+                          <h6 className="text-light fw-bold mb-0" style={{ fontSize: '12px' }}>{selected.node.metrics.model_update_magnitude?.toFixed(3) || '0.000'}</h6>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ⛓️ Local Node Blockchain Ledger */}
+                <div className="pt-3 border-top border-secondary border-opacity-25 mt-2">
+                  <div className="d-flex align-items-center justify-content-between mb-2">
+                    <p className="text-secondary mb-0 d-flex align-items-center gap-1 small">
+                      <Database size={13} className="text-warning" /> Local Blockchain Ledger
+                    </p>
+                    {selected.localBlockchain && selected.localBlockchain.length > 1 && (
+                      <Badge bg="dark" className="border border-secondary border-opacity-25 text-secondary" style={{ fontSize: '10px' }}>
+                        {selected.localBlockchain.length - 1} Blocks
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="d-flex flex-column gap-2" style={{ maxHeight: '180px', overflowY: 'auto', paddingRight: '4px' }}>
+                    {selected.localBlockchain && selected.localBlockchain.length > 1 ? (
+                      selected.localBlockchain.filter((b: any) => b.eventType !== 'genesis').reverse().map((block: any, i: number) => (
+                        <div key={i} className="p-2 rounded border border-secondary border-opacity-10 bg-secondary bg-opacity-10">
+                          <div className="d-flex justify-content-between align-items-center mb-1">
+                            <Badge bg={
+                              block.eventType === 'packet_sent' ? 'primary' :
+                              block.eventType === 'packet_received' ? 'success' :
+                              block.eventType === 'packet_forwarded' ? 'info' :
+                              block.eventType === 'packet_blocked' ? 'danger' : 'warning'
+                            } style={{ fontSize: '9px' }}>
+                              {block.eventType.toUpperCase().replace('_', ' ')}
+                            </Badge>
+                            <span className="text-secondary" style={{ fontSize: '9px' }}>
+                              {new Date(block.timestamp).toLocaleTimeString()}
+                            </span>
+                          </div>
+                          <div className="text-light fw-medium" style={{ fontSize: '11px' }}>
+                            Packet <span className="text-info">#{block.packetId}</span>
+                          </div>
+                          
+                          <div className="text-secondary mt-1 mb-1 d-grid gap-1" style={{ fontSize: '10px' }}>
+                            <div>Src: <span className="text-light font-monospace">{block.sourceNode ? block.sourceNode.slice(2, 8).toUpperCase() : 'N/A'}</span></div>
+                            <div>Dst: <span className="text-light font-monospace">{block.destinationNode ? block.destinationNode.slice(2, 8).toUpperCase() : 'N/A'}</span></div>
+                          </div>
+
+                          <div className="text-secondary d-flex align-items-center gap-1" style={{ fontSize: '10px' }}>
+                            <span>Hash:</span>
+                            <span className="font-monospace text-warning text-opacity-75">{block.hash ? block.hash.slice(0, 14) : '...'}…</span>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-secondary small opacity-50 fst-italic">No local ledger records yet</p>
+                    )}
+                  </div>
+                </div>
 
                 {/* 🛡️ Secure 6G Processing Pipeline Panels */}
                 {selected.node.pipelineStages && selected.node.pipelineStages.length > 0 && (
@@ -1050,50 +1223,6 @@ const NetworkDashboardPage = () => {
                     <p className="text-secondary small opacity-50 fst-italic">No on-chain records yet</p>
                   )}
                 </div>
-
-                {/* ⛓️ Local Node Blockchain Ledger */}
-                <div className="pt-3 border-top border-secondary border-opacity-25 mt-3">
-                  <div className="d-flex align-items-center justify-content-between mb-2">
-                    <p className="text-secondary mb-0 d-flex align-items-center gap-1 small">
-                      <Database size={13} className="text-warning" /> Local Blockchain Ledger
-                    </p>
-                    {selected.localBlockchain && selected.localBlockchain.length > 1 && (
-                      <Badge bg="dark" className="border border-secondary border-opacity-25 text-secondary small">
-                        {selected.localBlockchain.length - 1} Blocks
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="d-flex flex-column gap-2" style={{ maxHeight: '200px', overflowY: 'auto', paddingRight: '4px' }}>
-                    {selected.localBlockchain && selected.localBlockchain.length > 1 ? (
-                      selected.localBlockchain.filter((b: any) => b.eventType !== 'genesis').reverse().map((block: any, i: number) => (
-                        <div key={i} className="p-2 rounded border border-secondary border-opacity-10 bg-secondary bg-opacity-10">
-                          <div className="d-flex justify-content-between align-items-center mb-1">
-                            <Badge bg={
-                              block.eventType === 'packet_sent' ? 'primary' :
-                              block.eventType === 'packet_received' ? 'success' :
-                              block.eventType === 'packet_blocked' ? 'danger' : 'warning'
-                            } style={{ fontSize: '9px' }}>
-                              {block.eventType.toUpperCase().replace('_', ' ')}
-                            </Badge>
-                            <span className="text-secondary" style={{ fontSize: '9px' }}>
-                              {new Date(block.timestamp).toLocaleTimeString()}
-                            </span>
-                          </div>
-                          <div className="text-light small fw-medium" style={{ fontSize: '11px' }}>
-                            Packet <span className="text-info">#{block.packetId}</span>
-                          </div>
-                          <div className="text-secondary d-flex align-items-center gap-1 mt-1" style={{ fontSize: '10px' }}>
-                            <span>Hash:</span>
-                            <span className="font-monospace text-warning text-opacity-75">{block.hash.slice(0, 14)}…</span>
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-secondary small opacity-50 fst-italic">No local ledger records yet</p>
-                    )}
-                  </div>
-                </div>
-
               </Card.Body>
             </Card>
           ) : (
@@ -1105,35 +1234,58 @@ const NetworkDashboardPage = () => {
                 </span>
               </Card.Header>
               <Card.Body className="p-3 d-flex flex-column" style={{ height: 'calc(100% - 100px)' }}>
-                <div style={{ height: '230px' }} className="mb-3">
+                <div className="row row-cols-1 g-2 flex-grow-1 overflow-auto" style={{ maxHeight: '460px' }}>
                   {analyticsData.length > 0 ? (
-                    <Line data={chartData} options={chartOptions} />
+                    <>
+                      {/* 1. Avg Trust */}
+                      <div className="col">
+                        <div className="p-2 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 h-100">
+                          <span className="text-secondary d-block mb-1" style={{ fontSize: '10px', letterSpacing: '0.5px' }}>AVG TRUST SCORE</span>
+                          <h6 className="text-info fw-bold mb-1">{analyticsData[analyticsData.length - 1].avgTrust}%</h6>
+                          <div style={{ height: '65px' }}>
+                            <Line data={trustChart} options={chartOptions} />
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* 2. Packet Rate */}
+                      <div className="col">
+                        <div className="p-2 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 h-100">
+                          <span className="text-secondary d-block mb-1" style={{ fontSize: '10px', letterSpacing: '0.5px' }}>PACKET RATE</span>
+                          <h6 className="text-success fw-bold mb-1">{analyticsData[analyticsData.length - 1].packetRate}/s</h6>
+                          <div style={{ height: '65px' }}>
+                            <Line data={rateChart} options={chartOptions} />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 3. Latency */}
+                      <div className="col">
+                        <div className="p-2 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 h-100">
+                          <span className="text-secondary d-block mb-1" style={{ fontSize: '10px', letterSpacing: '0.5px' }}>LATENCY</span>
+                          <h6 className="text-primary fw-bold mb-1">{analyticsData[analyticsData.length - 1].latency} ms</h6>
+                          <div style={{ height: '65px' }}>
+                            <Line data={latencyChart} options={chartOptions} />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 4. Attacks / Min */}
+                      <div className="col">
+                        <div className="p-2 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 h-100">
+                          <span className="text-secondary d-block mb-1" style={{ fontSize: '10px', letterSpacing: '0.5px' }}>ATTACKS / MIN</span>
+                          <h6 className="text-warning fw-bold mb-1">{analyticsData[analyticsData.length - 1].alerts}</h6>
+                          <div style={{ height: '65px' }}>
+                            <Line data={alertChart} options={chartOptions} />
+                          </div>
+                        </div>
+                      </div>
+                    </>
                   ) : (
-                    <div className="h-100 d-flex align-items-center justify-content-center text-secondary opacity-50 small">
-                       Buffering live analytics telemetry…
+                    <div className="w-100 d-flex align-items-center justify-content-center text-secondary opacity-50 small" style={{ height: '200px' }}>
+                       Buffering live telemetry…
                     </div>
                   )}
-                </div>
-
-                <div className="d-flex flex-column gap-2 mt-auto">
-                   <div className="p-3 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 shadow-sm">
-                      <span className="text-secondary small d-block mb-1">Average Trust Score</span>
-                      <h4 className="text-info fw-bold mb-0">
-                        {analyticsData.length > 0 ? analyticsData[analyticsData.length - 1].avgTrust : '--'}%
-                      </h4>
-                   </div>
-                   <div className="p-3 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 shadow-sm">
-                      <span className="text-secondary small d-block mb-1">Attacks (Last Minute)</span>
-                      <h4 className="text-warning fw-bold mb-0">
-                        {analyticsData.length > 0 ? analyticsData[analyticsData.length - 1].alerts : '--'}
-                      </h4>
-                   </div>
-                   <div className="p-3 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 shadow-sm">
-                      <span className="text-secondary small d-block mb-1">Active Malicious Nodes</span>
-                      <h4 className="text-danger fw-bold mb-0">
-                        {analyticsData.length > 0 ? analyticsData[analyticsData.length - 1].maliciousNodes : '--'}
-                      </h4>
-                   </div>
                 </div>
               </Card.Body>
             </Card>
