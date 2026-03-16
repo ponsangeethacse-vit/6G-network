@@ -43,6 +43,7 @@ class BlockchainConnector {
 
             const trustLedgerAbi = [
                 "function updateTrustScore(address _node, uint256 _newScore, string calldata _attackType) external",
+                "function processModelUpdate(address _node, uint256 _trustScore) external",
                 "function reportAnomaly(address _node, string calldata _reason) external",
                 "function setAnomalyThreshold(uint256 _newThreshold) external",
                 "function getTrustScore(address _node) external view returns (uint256, uint256, bool)",
@@ -89,6 +90,21 @@ class BlockchainConnector {
             return { success: true, txHash: tx.hash };
         } catch (err) {
             console.error('[BlockchainConnector] updateTrustScore error:', err.message);
+            return { success: false, error: err.message };
+        }
+    }
+
+    async processModelUpdate(address, score) {
+        await this.initialize();
+        if (!this.trustLedgerContract) return { success: false, message: "Contract not connected" };
+
+        try {
+            const scaledScore = Math.round(score * 100); 
+            const tx = await this.trustLedgerContract.processModelUpdate(address, Math.min(100, scaledScore));
+            await tx.wait();
+            return { success: true, txHash: tx.hash };
+        } catch (err) {
+            console.error('[BlockchainConnector] processModelUpdate error:', err.message);
             return { success: false, error: err.message };
         }
     }

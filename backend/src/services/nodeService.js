@@ -59,7 +59,9 @@ class NodeService {
 
         if (updateData.trustScore !== undefined) {
              try {
-                 const result = await blockchainConnector.updateTrustScore(nodeId, updateData.trustScore, updateData.status || "Update");
+                 const result = updateData.isModelUpdate 
+                     ? await blockchainConnector.processModelUpdate(nodeId, updateData.trustScore)
+                     : await blockchainConnector.updateTrustScore(nodeId, updateData.trustScore, updateData.status || "Update");
                  if (result.success) {
                       node.transactionHistory.push({
                            txHash: result.txHash,

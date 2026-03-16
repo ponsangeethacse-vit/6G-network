@@ -23,6 +23,7 @@ interface NetworkNode {
   role: number;
   trustScore?: number;   // 0–100
   status?: 'healthy' | 'suspicious' | 'under_investigation' | 'malicious' | 'isolated';
+  pipelineStages?: any[];
 }
 
 interface TxRecord {
@@ -654,6 +655,74 @@ const NetworkDashboardPage = () => {
                   </div>
                 </div>
 
+                {/* 🛡️ Secure 6G Processing Pipeline Panels */}
+                {selected.node.pipelineStages && selected.node.pipelineStages.length > 0 && (
+                  <div className="pt-3 border-top border-secondary border-opacity-25">
+                    <p className="text-secondary mb-3 d-flex align-items-center gap-1 small">
+                      <Activity size={13} className="text-info" /> Secure 6G Response Pipeline
+                    </p>
+                    <div className="row row-cols-1 g-2" style={{ maxHeight: '320px', overflowY: 'auto' }}>
+                      {selected.node.pipelineStages.map((stage: any, index: number) => {
+                        const isSuccess = stage.success !== false;
+                        const isAnomaly = stage.detected === true || stage.is_anomalous === true;
+                        
+                        let dotColor = 'text-success';
+                        if (!isSuccess || isAnomaly) dotColor = 'text-danger';
+                        if (stage.stage?.includes('Aggregator') || stage.stage?.includes('Learning')) dotColor = 'text-info';
+
+                        const score = stage.score !== undefined ? Number(stage.score) : null;
+
+                        return (
+                          <div key={index} className="col">
+                            <div className="p-2 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 shadow-sm">
+                              <div className="d-flex justify-content-between align-items-center mb-1">
+                                <span className={`fw-bold d-flex align-items-center gap-1`} style={{ fontSize: '11px', color: dotColor === 'text-danger' ? '#f87171' : '#f1f5f9' }}>
+                                  <div className={`rounded-circle ${dotColor.replace('text', 'bg')}`} style={{ width: 8, height: 8, flexShrink: 0 }} />
+                                  {stage.stage}
+                                </span>
+                                {score !== null && (
+                                  <Badge bg="dark" className="border border-secondary" style={{ fontSize: '10px' }}>
+                                    {score < 1.1 ? (score * 100).toFixed(0) + '%' : score}
+                                  </Badge>
+                                )}
+                              </div>
+                              <span className="text-secondary d-block" style={{ fontSize: '10px', lineHeight: '1.2' }}>
+                                {stage.details || stage.action || 'Processed'}
+                              </span>
+
+                              {/* 🔬 Visual Meters based on Stage */}
+                              {stage.stage?.includes('Autoencoder') && score !== null && (
+                                <div className="mt-2 bg-black bg-opacity-25 rounded-pill overflow-hidden" style={{ height: 4 }}>
+                                  <div className="bg-warning h-100" style={{ width: `${Math.min(100, score * 100)}%`, transition: 'width 0.5s ease' }} />
+                                </div>
+                              )}
+
+                              {stage.stage?.includes('LSTM') && score !== null && (
+                                <div className="mt-2 bg-black bg-opacity-25 rounded-pill overflow-hidden" style={{ height: 4 }}>
+                                  <div className="bg-danger h-100" style={{ width: `${Math.min(100, score * 100)}%`, transition: 'width 0.5s ease' }} />
+                                </div>
+                              )}
+
+                              {stage.stage?.includes('Dempster-Shafer') && stage.scores && (
+                                <div className="d-flex flex-column gap-1 mt-2">
+                                  <div className="progress bg-black bg-opacity-25 rounded-pill overflow-hidden" style={{ height: 4 }}>
+                                    <div className="progress-bar bg-success" style={{ width: `${(stage.scores.belief_benign || 0) * 100}%` }} />
+                                    <div className="progress-bar bg-danger" style={{ width: `${(stage.scores.belief_malicious || 0) * 100}%` }} />
+                                  </div>
+                                  <div className="d-flex justify-content-between text-secondary" style={{ fontSize: '8px' }}>
+                                    <span>Benign: {((stage.scores.belief_benign || 0) * 100).toFixed(0)}%</span>
+                                    <span>Malicious: {((stage.scores.belief_malicious || 0) * 100).toFixed(0)}%</span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {/* Simulation Controls */}
                 <div className="pt-3 border-top border-secondary border-opacity-25">
                   <p className="text-secondary mb-2 d-flex align-items-center gap-1 small">
@@ -670,6 +739,9 @@ const NetworkDashboardPage = () => {
                       <option value="DDoS">DDoS Attack</option>
                       <option value="Sybil">Sybil Attack</option>
                       <option value="DataManipulation">Data Manipulation</option>
+                      <option value="PoisonedGradients">Poisoned Gradients</option>
+                      <option value="DelayedUpdate">Delayed Update</option>
+                      <option value="CoordinatedAttack">Coordinated Attack</option>
                     </select>
                     <Button 
                       size="sm" 

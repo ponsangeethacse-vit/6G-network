@@ -17,6 +17,8 @@ app.use(express.json());
 // ─── 6G Node Management & Transfer Routes ───────────────────────────────────
 const nodesRouter = require('./routes/nodes');
 const transfersRouter = require('./routes/transfers');
+const physicalAuth = require('./services/physicalAuthService');
+const federatedAggregation = require('./services/federatedAggregationService');
 
 app.use('/api/admin/nodes', nodesRouter);
 app.use('/api/admin/transfers', transfersRouter);
@@ -87,6 +89,7 @@ function mineBlock(nodeAddr, score, action) {
 }
 
 const activeAttacks = {}; // { [nodeAddress]: 'DDoS' | 'Sybil' | 'DataManipulation' }
+const nodeMetricsHistory = {}; // { [nodeAddress]: list of metrics }
 
 // ─── Simulator ────────────────────────────────────────────────────────────────
 async function runSimulatorTick() {
@@ -94,22 +97,24 @@ async function runSimulatorTick() {
     const attack = activeAttacks[node.address] || 'Normal';
     const attacking = attack !== 'Normal';
 
-    // Compute trust score change (Deltas setup)
-    let delta = Math.floor(Math.random() * 2) + 1; // +1 to +2 normally
-    if (attack === 'Suspicious') {
-      delta = -(Math.floor(Math.random() * 11) + 10); // -10 to -20
-    } else if (attacking) {
-      delta = -(Math.floor(Math.random() * 21) + 40); // -40 to -60
-    }
-
-    const prev = trustScores[node.address] ?? 85;
-    const newScore = Math.max(0, Math.min(100, Math.round(prev + delta)));
-    trustScores[node.address] = newScore;
-
-    // Default metrics
+    // 1. Generate metrics shape matching pipeline expect inputs
     let packetRate = Math.floor(Math.random() * 20 + 1);
     let packetSize = Math.floor(Math.random() * 500 + 100);
     let responseTimeMs = Math.floor(Math.random() * 80 + 20);
+    let authFailures = 0;
+    let channelQuality = 0.95; // nominal
+
+    // 🛡️ Added: Signal metrics for physical layer auth
+    const correctProfile = physicalAuth.getCorrectProfile(node.address);
+    let providedRf = correctProfile ? correctProfile.rfFingerprint : 'RF_UNKNOWN';
+    let providedCsi = 0.85;
+    let providedSnr = 25.0;
+
+    // 🧠 Added: Model Update Gradient Metrics
+    let gradient_magnitude = Number((Math.random() * 0.25 + 0.1).toFixed(3));
+    let loss_change = Number((Math.random() * 0.1 - 0.05).toFixed(3));
+    let update_variance = Number((Math.random() * 0.04).toFixed(3));
+    let parameter_drift = Number((Math.random() * 0.02).toFixed(3));
 
     // Apply attack profiles
     if (attack === 'DDoS') {
@@ -119,81 +124,152 @@ async function runSimulatorTick() {
     } else if (attack === 'Sybil') {
       packetRate = 80;
       packetSize = 250;
-      responseTimeMs = 120;
+      authFailures = 5;
+      providedRf = `RF_SPOOF_${Math.floor(Math.random() * 1000)}`;
     } else if (attack === 'DataManipulation') {
       packetRate = 4;
       packetSize = 100;
-      responseTimeMs = 10; // Manipulated low latency
     } else if (attack === 'PacketFlooding') {
-      packetRate = 800; // extremely high rate
-      packetSize = 800;
-      responseTimeMs = 2000;
+      packetRate = 800;
     } else if (attack === 'Suspicious') {
-      packetRate = Math.floor(Math.random() * 60 + 30); // elevated traffic
-      packetSize = Math.floor(Math.random() * 1000 + 400);
-      responseTimeMs = Math.floor(Math.random() * 100 + 100);
+      packetRate = 45;
+      channelQuality = 0.75; 
+      providedCsi = 0.60;
+    } else if (attack === 'PoisonedGradients') {
+      gradient_magnitude = 0.85;
+      loss_change = 0.60;
+      update_variance = 0.45;
+    } else if (attack === 'DelayedUpdate') {
+      responseTimeMs = 2500;
+      packetRate = 1; 
+    } else if (attack === 'CoordinatedAttack') {
+      gradient_magnitude = 0.90; // High Poison
     }
 
-    // Emit trust_update matching the shape TrustDashboard expects
+    const currentMetrics = {
+      packet_rate: packetRate,
+      latency: responseTimeMs,
+      bandwidth_usage: packetSize * packetRate,
+      failed_requests: attacking ? 12 : 1,
+      connection_attempts: (attack === 'Sybil') ? 22 : 4,
+      authentication_failures: authFailures,
+      channel_quality: channelQuality,
+      rfFingerprint: providedRf,
+      csiBehavior: providedCsi,
+      snr: providedSnr,
+      gradient_magnitude,
+      loss_change,
+      update_variance,
+      parameter_drift
+    };
+
+    // Maintain history for LSTM sequential tests
+    if (!nodeMetricsHistory[node.address]) nodeMetricsHistory[node.address] = [];
+    const history = [...nodeMetricsHistory[node.address]];
+    nodeMetricsHistory[node.address].push(currentMetrics);
+    if (nodeMetricsHistory[node.address].length > 4) nodeMetricsHistory[node.address].shift();
+
+    const previousScore = trustScores[node.address] ?? 85;
+    let finalScore = previousScore;
+    let pipelineStages = [];
+    let isAnomalous = false;
+    let classification = 'Normal';
+
+    // 🔬 Step 1: Pre-Filter Physical Layer Authentication in Backend
+    const authStatus = physicalAuth.verifyIdentity(node.address, currentMetrics);
+
+    if (!authStatus.authenticated) {
+        // Reject and Isolate Immediately
+        isAnomalous = true;
+        classification = 'Spoofed Identity';
+        finalScore = Math.max(0, previousScore - 30); // Penalty
+        pipelineStages = [
+           { stage: "Physical Auth Pre-Filter (Backend)", success: false, details: authStatus.reason }
+        ];
+    } else {
+        // Proceed to AI Pipeline
+        try {
+          const response = await fetch('http://localhost:8000/pipeline/process', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              node_address: node.address,
+              current_trust: previousScore,
+              metrics: currentMetrics,
+              history: history
+            })
+          });
+
+          if (response.ok) {
+            const aiData = await response.json();
+            finalScore     = aiData.final_trust_score;
+            pipelineStages = [
+                { stage: "Physical Auth Pre-Filter (Backend)", success: true, details: "Passed credentials match" },
+                ...aiData.pipeline_stages
+            ];
+            isAnomalous    = aiData.is_anomalous;
+            classification = aiData.classification;
+          } else {
+            throw new Error('Fallback trigger');
+          }
+        } catch (e) {
+          // AI Service offline fallback heuristics
+          let delta = (attacking ? -20 : +2);
+          finalScore = Math.max(0, Math.min(100, Math.round(previousScore + delta)));
+          isAnomalous = attacking;
+          classification = attacking ? 'Fallback Attack' : 'Normal';
+          pipelineStages = [
+             { stage: "Physical Auth Pre-Filter (Backend)", success: true, details: "Passed credentials match" },
+             { stage: "Fallback Aggregator", score: finalScore, details: "AI Online verification skipping..." }
+          ];
+        }
+    }
+
+    trustScores[node.address] = finalScore;
+
+    // Emit trust_update with PIPELINE trace metadata
     io.emit('trust_update', {
       node: node.address,
-      packetSize: packetSize,
-      packetRate: packetRate,
+      packetSize,
+      packetRate,
       isMaliciousMode: attacking,
-      trustScore: newScore,
-      attackType: attack
+      trustScore: finalScore,
+      attackType: attack,
+      classification: classification,
+      pipelineStages: pipelineStages // Added for frontend panel
     });
 
-    // Mine a block with the appropriate action type
+    // 6. Blockchain Smart Contract Enforcement (Enabler condition)
     let action = 'Trust Score Updated';
-    let shouldMine = Math.random() < 0.25; // limit normal spam
+    let shouldMine = Math.random() < 0.20;
 
-    if (newScore < 40) {
+    if (isAnomalous) {
       action = 'Node Access Revoked';
-      shouldMine = true; // Always record anomaly
-    } else if (newScore < 60) {
-      action = 'Suspicious Behavior Detected';
-      shouldMine = true;
-    } else if (prev < 60 && newScore >= 60) {
-      action = 'Node Recovered';
+      shouldMine = true; // Log instantly
+    } else if (finalScore < 60 && previousScore >= 60) {
+      action = 'Suspicious Behavior Logged';
       shouldMine = true;
     }
 
     if (shouldMine) {
-      mineBlock(node.address, newScore, action);
+      mineBlock(node.address, finalScore, action);
     }
 
-    // Generate attack alert when trust falls below threshold
-    if (newScore < 60) {
-      let classification = 'Insider Threat';
-      let message = 'Anomalous internal access pattern';
+    // 🤝 Submit for Federated Aggregation if trust >= threshold
+    if (finalScore >= 60) {
+      const gradients = [
+        Number((Math.random() * 0.4 + 0.1).toFixed(3)),
+        Number((Math.random() * 0.3 + 0.1).toFixed(3)),
+        Number((Math.random() * 0.2).toFixed(3)),
+        Number((Math.random() * 0.5 + 0.5).toFixed(3)),
+        Number((Math.random() * 0.1).toFixed(3))
+      ];
+      federatedAggregation.submitUpdate(node.address, gradients, finalScore);
+    }
 
-      try {
-        const response = await fetch('http://localhost:8000/predict-attack', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            packet_rate: packetRate,
-            latency: responseTimeMs,
-            failed_requests: attacking ? 50 : 3,
-            connection_attempts: attacking ? 12 : 2,
-            bandwidth_usage: packetSize * packetRate,
-            authentication_failures: (attack === 'Sybil') ? 15 : (attacking ? 3 : 0)
-          })
-        });
-
-        if (response.ok) {
-          const aiData = await response.json();
-          classification = aiData.classification;
-          message = aiData.message;
-          console.log(`[AI-Service] Predicted [${classification}] for Node ${node.address.slice(0,6)}`);
-        }
-      } catch (e) {
-        // Fallback placeholder logic if AI microservice goes down
-        classification = attacking ? 'DDoS Attack' : 'Data Manipulation';
-      }
-
-      const severity = newScore < 30 ? 'critical' : newScore < 50 ? 'high' : 'medium';
+    // Generate attack alert structure for monitoring page buffer feed
+    if (isAnomalous || finalScore < 60) {
+      const severity = finalScore < 30 ? 'critical' : finalScore < 50 ? 'high' : 'medium';
       const nodeLabel = `Node ${node.address.slice(2, 6).toUpperCase()}`;
 
       const alert = {
@@ -202,9 +278,9 @@ async function runSimulatorTick() {
         nodeLabel,
         type: classification.includes('Attack') ? classification : `${classification} Attack`,
         message: `⚠️ ${classification} detected on ${nodeLabel}`,
-        detail:  message,
+        detail: pipelineStages.map(p => `${p.stage}: ${p.details || 'Processed'}`).join(' | '),
         severity,
-        trustScore: newScore,
+        trustScore: finalScore,
         timestamp: Date.now(),
         resolved: false,
       };
@@ -213,10 +289,26 @@ async function runSimulatorTick() {
       // Push real-time to connected clients
       io.emit('new_alert', alert);
     }
+    
   }
+
+  // 🧠 Execute Secure Federated Aggregation round cycle
+  const globalModel = federatedAggregation.aggregate();
+  io.emit('federated_model_updated', { globalModel });
 }
 
 // ─── REST API ─────────────────────────────────────────────────────────────────
+app.post('/api/verify-physical-identity', (req, res) => {
+  const { nodeAddress, metrics } = req.body;
+  if (!nodeAddress || !metrics) return res.status(400).json({ error: 'nodeAddress and metrics required' });
+  
+  const result = physicalAuth.verifyIdentity(nodeAddress, metrics);
+  if (!result.authenticated) {
+    return res.status(403).json(result);
+  }
+  res.json(result);
+});
+
 app.get('/api/nodes', (req, res) => {
   res.json({ nodes: MOCK_NODES });
 });

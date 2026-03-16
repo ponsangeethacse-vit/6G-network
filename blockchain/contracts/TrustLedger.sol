@@ -29,13 +29,24 @@ contract TrustLedger {
         uint256 timestamp;
     }
 
+    struct ModelUpdateRecord {
+        address nodeId;
+        uint256 trustScore;
+        string decision;
+        uint256 timestamp;
+    }
+
     mapping(address => TrustData) public trustScores;
     mapping(address => TrustRecord[]) public trustHistory;
+    mapping(address => ModelUpdateRecord[]) public modelUpdateHistory;
     TransferRecord[] public globalTransfers;
     
     event TransferLogged(address indexed sender, address indexed receiver, string details, uint256 trustUpdate);
     
     uint256 public anomalyThreshold = 60; // < 0.6 is suspicious
+
+    event ModelUpdateAccepted(address indexed node, uint256 score);
+    event ModelUpdateRejected(address indexed node, uint256 score, string reason);
 
     event TrustUpdated(address indexed node, uint256 newScore);
     event AnomalyReported(address indexed node, string reason, uint256 score);
@@ -51,6 +62,38 @@ contract TrustLedger {
     constructor(address _registryAddress) {
         owner = msg.sender;
         registry = NodeRegistry(_registryAddress);
+    }
+
+    function processModelUpdate(address _node, uint256 _trustScore) external onlyOwner {
+        require(registry.isNodeRegistered(_node), "Node is not registered in Registry");
+        require(!trustScores[_node].isBlocked, "Node is blacklisted");
+        require(_trustScore <= 100, "Score must be <= 100");
+
+        string memory decision;
+        if (_trustScore >= anomalyThreshold) {
+            decision = "Accepted";
+            emit ModelUpdateAccepted(_node, _trustScore);
+        } else {
+            decision = "Rejected";
+            emit ModelUpdateRejected(_node, _trustScore, "Trust score below threshold");
+            
+            // Blacklist node
+            trustScores[_node].isBlocked = true;
+            emit AccessRevoked(_node);
+            emit AttackDetected(_node, "Malicious Model Update", _trustScore);
+        }
+
+        // Store only security metadata
+        modelUpdateHistory[_node].push(ModelUpdateRecord({
+            nodeId: _node,
+            trustScore: _trustScore,
+            decision: decision,
+            timestamp: block.timestamp
+        }));
+        
+        // Update general trust scale too for compatibility
+        trustScores[_node].fusionTrustScore = _trustScore;
+        trustScores[_node].lastUpdated = block.timestamp;
     }
 
     function updateTrustScore(address _node, uint256 _newScore, string calldata _attackType) external onlyOwner {

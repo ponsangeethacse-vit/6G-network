@@ -3,103 +3,203 @@ from pydantic import BaseModel
 import uvicorn
 import math
 
-app = FastAPI(title="6G TrustGuard AI Microservice", description="Microservice for Attack Prediction and Trust Calculation")
+from modules.physical_auth import PhysicalAuth
+from modules.autoencoder_anomaly import AutoencoderAnomaly
+from modules.lstm_temporal import LSTMTemporalDetector
+from modules.dempster_shafer import DempsterShaferFusion
+from modules.trust_learning import TrustLearning
+from modules.federated_aggregator import FederatedAggregator
+from modules.model_autoencoder import ModelAutoencoderAnomaly
+from modules.model_lstm import ModelLSTMAttackDetector
+from modules.model_dempster_shafer import ModelDempsterShaferFusion
+from modules.model_trust_learning import ModelTrustLearning
+
+app = FastAPI(title="6G TrustGuard AI Microservice", description="Refactored Secure Federated Learning Workflow")
+
+# ─── Initialize Modules ────────────────────────────────────────────────────────
+phys_auth = PhysicalAuth()
+autoencoder = AutoencoderAnomaly()
+lstm_detector = LSTMTemporalDetector()
+ds_fusion = DempsterShaferFusion()
+trust_learning = TrustLearning()
+fed_aggregator = FederatedAggregator()
+model_autoencoder = ModelAutoencoderAnomaly()
+model_lstm = ModelLSTMAttackDetector()
+model_ds_fusion = ModelDempsterShaferFusion()
+model_trust = ModelTrustLearning()
 
 # ─── Pydantic Models for Validation ───────────────────────────────────────────
 class AttackMetrics(BaseModel):
-    packet_rate: float            # Packets per second
-    latency: float                # Response time in ms
-    failed_requests: int          # Count of failures
-    connection_attempts: int     # Count of node connections
-    bandwidth_usage: float        # Bytes/sec
-    authentication_failures: int # Count of auth failures
+    packet_rate: float
+    latency: float
+    failed_requests: int
+    connection_attempts: int
+    bandwidth_usage: float
+    authentication_failures: int
+    channel_quality: float = 1.0 # Added for Stage 1
+
+class PipelineRequest(BaseModel):
+    node_address: str
+    current_trust: float
+    metrics: dict
+    history: list = [] # For LSTM temporal dimension
 
 class TrustMetrics(BaseModel):
-    behavioral_trust: float       # 0.0 to 1.0 (Direct interaction quality)
-    historical_trust: float       # 0.0 to 1.0 (Past scores aggregator)
-    reputation_trust: float       # 0.0 to 1.0 (Peer feedback)
-    context_trust: float          # 0.0 to 1.0 (Network conditions/Role context)
+    behavioral_trust: float
+    historical_trust: float
+    reputation_trust: float
+    context_trust: float
+
+class ModelUpdateMetrics(BaseModel):
+    gradient_magnitude: float
+    loss_change: float
+    update_variance: float
+    parameter_drift: float
+
+class TemporalAnomalyRequest(BaseModel):
+    current: dict
+    history: list = []
+
+class FusionRequest(BaseModel):
+    anomaly_score: float
+    temporal_attack_probability: float
+
+class TrustUpdateRequest(BaseModel):
+    previous_trust_score: float
+    belief_malicious: float
+    belief_benign: float
+    uncertainty: float
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy", "service": "6G-AI-Microservice"}
+    return {"status": "healthy", "service": "6G-AI-Microservice", "pipeline": "Refactored"}
 
-@app.post("/predict-attack")
-def predict_attack(metrics: AttackMetrics):
+@app.post("/pipeline/process")
+def process_pipeline(req: PipelineRequest):
     """
-    Predicts network attack types based on live traffic metric parameters.
+    Main orchestrator executing the Secure Federated Learning Processing stages.
+    Stages 1, 2, 3, 4, 5, 7.
     """
     try:
-        # 🧪 Heuristics proxy for ML classification (e.g., Random Forest / Logistic)
-        if metrics.failed_requests > 30 or metrics.packet_rate > 800 or metrics.bandwidth_usage > 50000:
-            return {
-                "classification": "DDoS",
-                "risk_score": 85.0,
-                "confidence": 0.92,
-                "message": "🚨 High packet rate or bandwidth utilization flags prospective DDoS vector."
-            }
+        metrics = req.metrics
+        history = req.history
+        current_trust = req.current_trust
+
+        # 1. Physical Layer Authentication
+        auth_res = phys_auth.process(metrics)
         
-        if metrics.connection_attempts > 15 or metrics.latency > 500 or metrics.authentication_failures > 8:
-            return {
-                "classification": "Sybil",
-                "risk_score": 75.0,
-                "confidence": 0.81,
-                "message": "⚠️ High connection frequency or auth failures suggest Sybil identity spoofing."
-            }
+        # 2. Autoencoder Pattern Anomaly
+        ae_res = autoencoder.process(metrics)
+        
+        # 3. LSTM Temporal Attack Detection
+        lstm_res = lstm_detector.process(metrics, history)
+        
+        # 4. Dempster–Shafer Evidence Fusion
+        fused_res = ds_fusion.process(ae_res, lstm_res)
+        
+        # 5. Trust-by-Learning Update
+        trust_res = trust_learning.process(current_trust, fused_res, auth_res)
+
+        # 6. Blockchain Smart Contract Enforcement
+        # Handled by the backend after AI response (Enforcement)
+        blockchain_trigger = {
+            "require_log": True,
+            "require_revoke": not auth_res.get("success") or fused_res.get("is_anomalous"),
+            "action_type": "AccessRevoked" if (not auth_res.get("success") or fused_res.get("is_anomalous")) else "TrustUpdated"
+        }
+
+        # 7. Secure Federated Model Aggregation
+        agg_res = fed_aggregator.process(req.node_address, [])
 
         return {
-            "classification": "Normal",
-            "risk_score": 10.0,
-            "confidence": 0.95,
-            "message": "✅ Node traffic behaving within nominal operational bands."
+            "node_address": req.node_address,
+            "pipeline_stages": [
+                auth_res,
+                ae_res,
+                lstm_res,
+                fused_res,
+                trust_res,
+                {"stage": "Blockchain Enforcement Token", "action": blockchain_trigger["action_type"]},
+                agg_res
+            ],
+            "final_trust_score": trust_res.get("new_trust"),
+            "is_anomalous": blockchain_trigger["require_revoke"],
+            "classification": "Attack Detected" if blockchain_trigger["require_revoke"] else "Normal"
         }
-        
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Inference error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Pipeline orchestrator error: {str(e)}")
+
+@app.post("/detect-pattern-anomaly")
+def detect_pattern_anomaly(metrics: ModelUpdateMetrics):
+    try:
+        res = model_autoencoder.process(metrics.dict())
+        return {
+            "anomaly_score": res["anomaly_score"],
+            "detected": res["detected"],
+            "details": res["details"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Anomaly detection error: {str(e)}")
+
+@app.post("/detect-temporal-attack")
+def detect_temporal_attack(req: TemporalAnomalyRequest):
+    try:
+        res = model_lstm.process(req.current, req.history)
+        return {
+            "temporal_attack_probability": res["temporal_attack_probability"],
+            "detected": res["detected"],
+            "details": res["details"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Temporal analysis error: {str(e)}")
+
+@app.post("/fuse-security-evidence")
+def fuse_security_evidence(req: FusionRequest):
+    try:
+        res = model_ds_fusion.process(req.anomaly_score, req.temporal_attack_probability)
+        return {
+            "belief_malicious": res["belief_malicious"],
+            "belief_benign": res["belief_benign"],
+            "uncertainty": res["uncertainty"],
+            "conflict_k": res["conflict_k"],
+            "decision": res["fused_decision"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Evidence fusion error: {str(e)}")
+
+@app.post("/update-trust-score")
+def update_trust_score(req: TrustUpdateRequest):
+    try:
+        beliefs = {
+            "belief_malicious": req.belief_malicious,
+            "belief_benign": req.belief_benign,
+            "uncertainty": req.uncertainty
+        }
+        res = model_trust.process(req.previous_trust_score, beliefs)
+        return {
+            "new_trust_score": res["new_trust"],
+            "delta": res["delta"],
+            "classification": res["classification"],
+            "details": res["details"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Trust update error: {str(e)}")
+
+# Keep previous endpoints for safe backwards compatibility during transition
+@app.post("/predict-attack")
+def predict_attack(metrics: AttackMetrics):
+    if metrics.failed_requests > 30 or metrics.packet_rate > 800:
+        return {"classification": "DDoS", "risk_score": 85.0}
+    return {"classification": "Normal", "risk_score": 10.0}
 
 @app.post("/calculate-trust")
 def calculate_trust(metrics: TrustMetrics):
-    """
-    Fuses multiple trust vectors into a singular 0-100 Fusion score.
-    Replaces the Node.js dense dense neural network.
-    """
-    try:
-        # Applied Algorithm: Weighted Sum with nonlinear clipping triggers
-        # Simulating dense outputs: score heavily relies on behavioral and peer metrics.
-        b_weight = 0.35
-        h_weight = 0.25
-        r_weight = 0.20
-        c_weight = 0.20
-
-        raw_score = (
-            metrics.behavioral_trust * b_weight +
-            metrics.historical_trust * h_weight +
-            metrics.reputation_trust * r_weight +
-            metrics.context_trust * c_weight
-        )
-
-        # 🍯 Apply soft sigmoid scaling manually for non-linear characteristics
-        # Convert weight [0,1] to logit or mapped curve if desired, otherwise simple %
-        fusion_score = round(raw_score * 100, 2)
-        
-        # Clip just in case
-        fusion_score = max(0.0, min(100.0, fusion_score))
-
-        return {
-            "fusion_trust_score": fusion_score,
-            "components": {
-                "behavioral": metrics.behavioral_trust,
-                "historical": metrics.historical_trust,
-                "reputation": metrics.reputation_trust,
-                "context": metrics.context_trust
-            },
-            "interpretation": "Trusted" if fusion_score >= 70 else "Suspicious" if fusion_score >= 40 else "Malicious"
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Fusion error: {str(e)}")
+    raw = (metrics.behavioral_trust * 0.35 + metrics.historical_trust * 0.25)
+    return {"fusion_trust_score": round(raw * 100, 2)}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
