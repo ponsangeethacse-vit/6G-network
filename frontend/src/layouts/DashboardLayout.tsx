@@ -95,17 +95,6 @@ const DashboardLayout = ({
                   {isConnected ? 'System Online' : 'Connecting...'}
                 </Badge>
               </div>
-              <Button
-                variant={maliciousMode ? 'outline-danger' : 'outline-success'}
-                onClick={toggleMaliciousMode}
-                className="d-flex align-items-center gap-2"
-                style={{
-                  boxShadow: maliciousMode ? '0 0 15px rgba(220, 53, 69, 0.3)' : 'none'
-                }}
-              >
-                {maliciousMode ? <ShieldAlert size={16} /> : <Activity size={16} />}
-                {maliciousMode ? 'Malicious Traffic: ON' : 'Normal Traffic'}
-              </Button>
             </div>
 
           </div>
