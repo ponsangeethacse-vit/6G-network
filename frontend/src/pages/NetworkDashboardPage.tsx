@@ -39,6 +39,7 @@ interface SelectedPanel {
   node: NetworkNode;
   activity: string[];
   lastTx: TxRecord | null;
+  localBlockchain?: any[];
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -379,7 +380,15 @@ const NetworkDashboardPage = () => {
     );
     if (activity.length === 0) activity.push('No recent on-chain activity');
 
-    setSelected({ node, activity, lastTx });
+    // ⛓️ Fetch Local Node blockchain
+    axios.get(`${SOCKET_URL}/api/nodes/${addr}/local-blockchain`)
+      .then(res => {
+        setSelected({ node, activity, lastTx, localBlockchain: res.data });
+      })
+      .catch(e => {
+        setSelected({ node, activity, lastTx, localBlockchain: [] });
+      });
+
   }, [nodes, txLog]);
 
   // ── Setup Cy event listeners once ─────────────────────────────────────
@@ -797,6 +806,49 @@ const NetworkDashboardPage = () => {
                   ) : (
                     <p className="text-secondary small opacity-50 fst-italic">No on-chain records yet</p>
                   )}
+                </div>
+
+                {/* ⛓️ Local Node Blockchain Ledger */}
+                <div className="pt-3 border-top border-secondary border-opacity-25 mt-3">
+                  <div className="d-flex align-items-center justify-content-between mb-2">
+                    <p className="text-secondary mb-0 d-flex align-items-center gap-1 small">
+                      <Database size={13} className="text-warning" /> Local Blockchain Ledger
+                    </p>
+                    {selected.localBlockchain && selected.localBlockchain.length > 1 && (
+                      <Badge bg="dark" className="border border-secondary border-opacity-25 text-secondary small">
+                        {selected.localBlockchain.length - 1} Blocks
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="d-flex flex-column gap-2" style={{ maxHeight: '200px', overflowY: 'auto', paddingRight: '4px' }}>
+                    {selected.localBlockchain && selected.localBlockchain.length > 1 ? (
+                      selected.localBlockchain.filter((b: any) => b.eventType !== 'genesis').reverse().map((block: any, i: number) => (
+                        <div key={i} className="p-2 rounded border border-secondary border-opacity-10 bg-secondary bg-opacity-10">
+                          <div className="d-flex justify-content-between align-items-center mb-1">
+                            <Badge bg={
+                              block.eventType === 'packet_sent' ? 'primary' :
+                              block.eventType === 'packet_received' ? 'success' :
+                              block.eventType === 'packet_blocked' ? 'danger' : 'warning'
+                            } style={{ fontSize: '9px' }}>
+                              {block.eventType.toUpperCase().replace('_', ' ')}
+                            </Badge>
+                            <span className="text-secondary" style={{ fontSize: '9px' }}>
+                              {new Date(block.timestamp).toLocaleTimeString()}
+                            </span>
+                          </div>
+                          <div className="text-light small fw-medium" style={{ fontSize: '11px' }}>
+                            Packet <span className="text-info">#{block.packetId}</span>
+                          </div>
+                          <div className="text-secondary d-flex align-items-center gap-1 mt-1" style={{ fontSize: '10px' }}>
+                            <span>Hash:</span>
+                            <span className="font-monospace text-warning text-opacity-75">{block.hash.slice(0, 14)}…</span>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-secondary small opacity-50 fst-italic">No local ledger records yet</p>
+                    )}
+                  </div>
                 </div>
 
               </Card.Body>

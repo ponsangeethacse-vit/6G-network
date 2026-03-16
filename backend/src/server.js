@@ -19,6 +19,8 @@ const nodesRouter = require('./routes/nodes');
 const transfersRouter = require('./routes/transfers');
 const physicalAuth = require('./services/physicalAuthService');
 const federatedAggregation = require('./services/federatedAggregationService');
+const routingService = require('./services/routingService'); // Added
+const localBlockchainService = require('./services/localBlockchainService'); // Added for local node chain
 
 app.use('/api/admin/nodes', nodesRouter);
 app.use('/api/admin/transfers', transfersRouter);
@@ -90,6 +92,9 @@ function mineBlock(nodeAddr, score, action) {
 
 const activeAttacks = {}; // { [nodeAddress]: 'DDoS' | 'Sybil' | 'DataManipulation' }
 const nodeMetricsHistory = {}; // { [nodeAddress]: list of metrics }
+const activePackets = []; // Added
+const nodeLedgers = {}; // Added for local logging
+let packetSeq = 1; // Added
 
 // ─── Simulator ────────────────────────────────────────────────────────────────
 async function runSimulatorTick() {
@@ -295,9 +300,163 @@ async function runSimulatorTick() {
   // 🧠 Execute Secure Federated Aggregation round cycle
   const globalModel = federatedAggregation.aggregate();
   io.emit('federated_model_updated', { globalModel });
+
+  // 🛰️ Simulation Packet Forwarding (Multi-Hop)
+  processPacketsSim();
+}
+
+function processPacketsSim() {
+  for (let i = activePackets.length - 1; i >= 0; i--) {
+    const pkt = activePackets[i];
+    
+    if (pkt.currentIdx >= pkt.path.length - 1) {
+      console.log(`[Routing] Packet ${pkt.id} reached destination ${pkt.dst.slice(2, 6).toUpperCase()}`);
+      io.emit('packet_delivered', { packetId: pkt.id, dst: pkt.dst });
+
+      // ⛓️ Log Received on Destination Node local blockchain
+      localBlockchainService.getNodeBlockchain(pkt.dst).mineBlock(pkt.id, 'packet_received', pkt.src, pkt.dst);
+
+      activePackets.splice(i, 1);
+      continue;
+    }
+
+    const current_node = pkt.path[pkt.currentIdx];
+    const next_hop_node = pkt.path[pkt.currentIdx + 1];
+
+    // Check if next hop is malicious
+    const attack = activeAttacks[next_hop_node] || 'Normal';
+    if (attack !== 'Normal') {
+      console.log(`[Routing] 🚨 Next hop ${next_hop_node.slice(2, 6).toUpperCase()} is MALICIOUS (${attack}). Recomputing path from ${current_node.slice(2, 6).toUpperCase()}...`);
+      
+      // ⛓️ Log Blocked on Current Node local blockchain
+      localBlockchainService.getNodeBlockchain(current_node).mineBlock(pkt.id, 'packet_blocked', pkt.src, pkt.dst);
+
+      const newPath = routingService.calculateRoute(MOCK_NODES, trustScores, activeAttacks, current_node, pkt.dst);
+      if (newPath.length < 2) {
+        console.log(`[Routing] ❌ Destination ${pkt.dst.slice(2, 6).toUpperCase()} UNREACHABLE from ${current_node.slice(2, 6).toUpperCase()}.`);
+        io.emit('packet_dropped', { packetId: pkt.id, node: current_node, reason: 'unreachable' });
+        activePackets.splice(i, 1);
+        continue;
+      }
+
+      pkt.path = newPath;
+      pkt.currentIdx = 0; // Reset index to accommodate start over from current node inside new node set
+      console.log(`[Routing] Re-Routed successfully: ${pkt.path.map(n => n.slice(2, 6).toUpperCase()).join(' -> ')}`);
+      io.emit('packet_rerouted', { packetId: pkt.id, path: pkt.path });
+    }
+
+    // ⛓️ Log Forwarded on Current Node local blockchain before incrementing index
+    localBlockchainService.getNodeBlockchain(current_node).mineBlock(pkt.id, 'packet_forwarded', pkt.src, pkt.dst);
+
+    pkt.currentIdx++;
+    const node_now = pkt.path[pkt.currentIdx];
+
+    // 📝 Local Ledger Logging & Track History
+    pkt.current_node = node_now;
+    if (!pkt.path_history) pkt.path_history = [];
+    pkt.path_history.push(node_now);
+    pkt.timestamp = Date.now();
+
+    if (!nodeLedgers[node_now]) nodeLedgers[node_now] = [];
+    nodeLedgers[node_now].push({
+      packet_id: pkt.id,
+      source_node: pkt.src,
+      destination_node: pkt.dst,
+      current_node: node_now,
+      path_history: [...pkt.path_history],
+      data: pkt.data,
+      timestamp: pkt.timestamp
+    });
+
+    console.log(`[Routing] Packet ${pkt.id} hopped to ${node_now.slice(2, 6).toUpperCase()} (Logged in Ledger)`);
+    io.emit('packet_hop', {
+      packetId: pkt.id,
+      current: node_now,
+      path: pkt.path,
+      path_history: pkt.path_history,
+      index: pkt.currentIdx,
+      data: pkt.data
+    });
+  }
 }
 
 // ─── REST API ─────────────────────────────────────────────────────────────────
+// ─── Multi-Hop Routing APIs ──────────────────────────────────────────────────
+app.get('/api/calculate-route', (req, res) => {
+  const { src, dst } = req.query;
+  if (!src || !dst) return res.status(400).json({ error: 'src and dst addresses required' });
+
+  const path = routingService.calculateRoute(MOCK_NODES, trustScores, activeAttacks, src, dst);
+  const cost = path.reduce((sum, node, i) => {
+    if (i === 0) return 0;
+    return sum + routingService.getEdgeWeight(node, trustScores, activeAttacks);
+  }, 0);
+
+  res.json({ path, cost });
+});
+
+app.post('/api/send-data', (req, res) => {
+  const { src, dst, data } = req.body;
+  if (!src || !dst) return res.status(400).json({ error: 'src and dst required' });
+
+  const path = routingService.calculateRoute(MOCK_NODES, trustScores, activeAttacks, src, dst);
+  
+  if (path.length < 2) {
+    return res.status(400).json({ error: 'Destination unreachable or path finding failed' });
+  }
+
+  const packet = {
+    id: packetSeq++,
+    src,
+    dst,
+    current_node: src,
+    path_history: [src],
+    data: data || 'Generic Data Stream',
+    path,
+    currentIdx: 0,
+    timestamp: Date.now()
+  };
+
+  // Log at source ledger as well
+  if (!nodeLedgers[src]) nodeLedgers[src] = [];
+  nodeLedgers[src].push({
+    packet_id: packet.id,
+    source_node: src,
+    destination_node: dst,
+    current_node: src,
+    path_history: [src],
+    data: packet.data,
+    timestamp: packet.timestamp
+  });
+
+  // ⛓️ Log Sent on Source Node local blockchain
+  localBlockchainService.getNodeBlockchain(src).mineBlock(packet.id, 'packet_sent', src, dst);
+
+  activePackets.push(packet);
+  
+  io.emit('packet_sent', {
+    packetId: packet.id,
+    src,
+    dst,
+    path,
+    data: packet.data
+  });
+
+  res.json({ success: true, packetId: packet.id, path });
+});
+
+app.get('/api/nodes/:addr/ledger', (req, res) => {
+  const { addr } = req.params;
+  const ledger = nodeLedgers[addr] || [];
+  res.json(ledger);
+});
+
+app.get('/api/nodes/:addr/local-blockchain', (req, res) => {
+  const { addr } = req.params;
+  const chain = localBlockchainService.getNodeBlockchain(addr).getChain();
+  res.json(chain);
+});
+
 app.post('/api/verify-physical-identity', (req, res) => {
   const { nodeAddress, metrics } = req.body;
   if (!nodeAddress || !metrics) return res.status(400).json({ error: 'nodeAddress and metrics required' });
