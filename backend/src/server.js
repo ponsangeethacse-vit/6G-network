@@ -95,6 +95,85 @@ const nodeMetricsHistory = {}; // { [nodeAddress]: list of metrics }
 const activePackets = []; // Added
 const nodeLedgers = {}; // Added for local logging
 let packetSeq = 1; // Added
+let simulationRunning = false;
+let autoPacketTimeout = null;
+
+function scheduleNextPacket() {
+  // Random delay between 3000ms and 5000ms
+  const delay = 3000 + Math.floor(Math.random() * 2001);
+  autoPacketTimeout = setTimeout(() => {
+    if (!simulationRunning) return;
+    generateAutoPacket();
+    scheduleNextPacket();  // schedule the next one after this finishes
+  }, delay);
+}
+
+function generateAutoPacket() {
+  // Pick distinct random src/dst
+  const idx1 = Math.floor(Math.random() * MOCK_NODES.length);
+  let idx2 = Math.floor(Math.random() * MOCK_NODES.length);
+  while (idx2 === idx1) idx2 = Math.floor(Math.random() * MOCK_NODES.length);
+  const src = MOCK_NODES[idx1].address;
+  const dst = MOCK_NODES[idx2].address;
+
+  // Calculate safest path based on current trust scores
+  const path = routingService.calculateRoute(MOCK_NODES, trustScores, activeAttacks, src, dst);
+  if (path.length < 2) {
+    console.log(`[AutoGen] ⚠️  No safe path from ${src.slice(-4)} → ${dst.slice(-4)}, skipping.`);
+    return;
+  }
+
+  const pathTrusts = path.map(addr => {
+    const t = trustScores[addr] !== undefined ? trustScores[addr] : 80;
+    return `${addr.slice(-4)}(${t})`;
+  });
+
+  const packet = {
+    id: packetSeq++,
+    src, dst,
+    current_node: src,
+    path_history: [src],
+    data: `AutoPkt-${Date.now()}`,
+    path,
+    currentIdx: 0,
+    timestamp: Date.now()
+  };
+
+  // Log at source ledger
+  if (!nodeLedgers[src]) nodeLedgers[src] = [];
+  nodeLedgers[src].push({
+    packet_id: packet.id,
+    source_node: src,
+    destination_node: dst,
+    current_node: src,
+    path_history: [src],
+    data: packet.data,
+    timestamp: packet.timestamp
+  });
+  localBlockchainService.getNodeBlockchain(src).mineBlock(packet.id, 'packet_sent', src, dst);
+
+  activePackets.push(packet);
+
+  console.log(`[AutoGen] 📦 Packet #${packet.id} | ${src.slice(-4)} → ${dst.slice(-4)} | Path: ${pathTrusts.join(' → ')}`);
+
+  io.emit('packet_sent', { packetId: packet.id, src, dst, path, data: packet.data });
+  io.emit('simulation_stats', { activePackets: activePackets.length, totalGenerated: packet.id });
+}
+
+function startAutoPackets() {
+  if (simulationRunning) return;
+  simulationRunning = true;
+  scheduleNextPacket();
+}
+
+function stopAutoPackets() {
+  simulationRunning = false;
+  if (autoPacketTimeout) {
+    clearTimeout(autoPacketTimeout);
+    autoPacketTimeout = null;
+  }
+}
+
 
 // ─── Simulator ────────────────────────────────────────────────────────────────
 async function runSimulatorTick() {
@@ -311,7 +390,7 @@ function processPacketsSim() {
     
     if (pkt.currentIdx >= pkt.path.length - 1) {
       console.log(`[Routing] Packet ${pkt.id} reached destination ${pkt.dst.slice(2, 6).toUpperCase()}`);
-      io.emit('packet_delivered', { packetId: pkt.id, dst: pkt.dst });
+      io.emit('packet_delivered', { packetId: pkt.id, dst: pkt.dst, src: pkt.src });
 
       // ⛓️ Log Received on Destination Node local blockchain
       localBlockchainService.getNodeBlockchain(pkt.dst).mineBlock(pkt.id, 'packet_received', pkt.src, pkt.dst);
@@ -323,10 +402,12 @@ function processPacketsSim() {
     const current_node = pkt.path[pkt.currentIdx];
     const next_hop_node = pkt.path[pkt.currentIdx + 1];
 
-    // Check if next hop is malicious
+    // Check if next hop is malicious OR below trust threshold
     const attack = activeAttacks[next_hop_node] || 'Normal';
-    if (attack !== 'Normal') {
-      console.log(`[Routing] 🚨 Next hop ${next_hop_node.slice(2, 6).toUpperCase()} is MALICIOUS (${attack}). Recomputing path from ${current_node.slice(2, 6).toUpperCase()}...`);
+    const trust = trustScores[next_hop_node] !== undefined ? trustScores[next_hop_node] : 80;
+
+    if (attack !== 'Normal' || trust < 50) {
+      console.log(`[Routing] 🚨 Next hop ${next_hop_node.slice(2, 6).toUpperCase()} triggers safety cutoff (Attack: ${attack}, Trust: ${trust}). Recomputing from ${current_node.slice(2, 6).toUpperCase()}...`);
       
       // ⛓️ Log Blocked on Current Node local blockchain
       localBlockchainService.getNodeBlockchain(current_node).mineBlock(pkt.id, 'packet_blocked', pkt.src, pkt.dst);
@@ -334,7 +415,7 @@ function processPacketsSim() {
       const newPath = routingService.calculateRoute(MOCK_NODES, trustScores, activeAttacks, current_node, pkt.dst);
       if (newPath.length < 2) {
         console.log(`[Routing] ❌ Destination ${pkt.dst.slice(2, 6).toUpperCase()} UNREACHABLE from ${current_node.slice(2, 6).toUpperCase()}.`);
-        io.emit('packet_dropped', { packetId: pkt.id, node: current_node, reason: 'unreachable' });
+        io.emit('packet_dropped', { packetId: pkt.id, node: current_node, reason: 'unreachable_or_low_trust' });
         activePackets.splice(i, 1);
         continue;
       }
@@ -347,6 +428,8 @@ function processPacketsSim() {
 
     // ⛓️ Log Forwarded on Current Node local blockchain before incrementing index
     localBlockchainService.getNodeBlockchain(current_node).mineBlock(pkt.id, 'packet_forwarded', pkt.src, pkt.dst);
+    
+    io.emit('packet_forwarded', { packetId: pkt.id, node: current_node, nextNode: next_hop_node, src: pkt.src, dst: pkt.dst });
 
     pkt.currentIdx++;
     const node_now = pkt.path[pkt.currentIdx];
@@ -455,6 +538,33 @@ app.get('/api/nodes/:addr/local-blockchain', (req, res) => {
   const { addr } = req.params;
   const chain = localBlockchainService.getNodeBlockchain(addr).getChain();
   res.json(chain);
+});
+
+app.post('/api/test/set-trust', (req, res) => {
+  const { node, score } = req.body;
+  if (!node || score === undefined) return res.status(400).json({ error: 'node and score required' });
+  trustScores[node] = score;
+  res.json({ success: true, node, score });
+});
+
+// ─── Simulation Control ───────────────────────────────────────────────────────
+app.post('/api/simulator/start', (req, res) => {
+  if (simulationRunning) return res.json({ success: true, running: true, note: 'already running' });
+  startAutoPackets();
+  io.emit('simulation_status', { running: true });
+  console.log('[Simulator] ▶️  Simulation STARTED — random packets every 3–5s');
+  res.json({ success: true, running: true });
+});
+
+app.post('/api/simulator/stop', (req, res) => {
+  stopAutoPackets();
+  io.emit('simulation_status', { running: false });
+  console.log('[Simulator] ⏹️  Simulation STOPPED');
+  res.json({ success: true, running: false });
+});
+
+app.get('/api/simulator/status', (req, res) => {
+  res.json({ running: simulationRunning, activePackets: activePackets.length, totalGenerated: packetSeq - 1 });
 });
 
 app.post('/api/verify-physical-identity', (req, res) => {

@@ -1,0 +1,13 @@
+--- AUTOGEN PACKET GENERATOR VERIFICATION ---
+
+[1] Starting simulation...
+Start: {"success":true,"running":true}
+
+[2] Waiting 12 seconds for auto-packets to generate...
+
+[3] Checking simulation status...
+Status: {"running":true,"activePackets":2,"totalGenerated":3}
+✅ SUCCESS: 3 packets auto-generated in ~12s (expected 2–4).
+
+[4] Stopping simulation...
+Stop: {"success":true,"running":false}

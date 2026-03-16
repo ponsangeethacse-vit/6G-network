@@ -193,6 +193,35 @@ const makeCyStylesheet = (nodes: NetworkNode[]) => {
         'opacity': 1,
       },
     },
+    {
+      selector: 'node.packet-particle',
+      style: {
+        'width': 12,
+        'height': 12,
+        'background-color': '#00d2ff',
+        'border-width': 1,
+        'border-color': '#ffffff',
+        'shape': 'ellipse',
+        'z-index': 9999,
+        'label': ''
+      }
+    },
+    {
+      selector: 'node.node-active-hop',
+      style: {
+        'border-width': 4,
+        'border-color': '#ffc107',
+        'transition-duration': '0.2s'
+      }
+    },
+    {
+      selector: 'node.packet-delivered-flash',
+      style: {
+        'border-width': 4,
+        'border-color': '#198754',
+        'transition-duration': '0.3s'
+      }
+    },
     ...nodeRules,
   ];
 };
@@ -208,6 +237,9 @@ const NetworkDashboardPage = () => {
   const [simAttack, setSimAttack]   = useState<string>('DDoS');
   const [loadingAttack, setLoadingAttack] = useState<boolean>(false);
   const [analyticsData, setAnalyticsData] = useState<{ time: string; avgTrust: number; alerts: number; maliciousNodes: number }[]>([]);
+  const [simRunning, setSimRunning]   = useState<boolean>(false);
+  const [simPackets, setSimPackets]   = useState<number>(0);
+  const [simMsg, setSimMsg]           = useState<string>('');
 
   // ── Analytics continuous intervals calculations ──
   useEffect(() => {
@@ -332,6 +364,92 @@ const NetworkDashboardPage = () => {
       setTxLog(prev => [tx, ...prev].slice(0, 50));
     });
 
+    const animatePacket = (path: string[]) => {
+      if (!cyRef.current || path.length < 2) return;
+      const cy = cyRef.current;
+      const srcNode = cy.$(`#${path[0]}`);
+      if (!srcNode.length) return;
+
+      const srcPos = srcNode.position();
+      const particle = cy.add({
+        group: 'nodes',
+        data: { id: `particle-${Date.now()}-${Math.random()}` },
+        position: { x: srcPos.x, y: srcPos.y },
+        classes: 'packet-particle'
+      });
+
+      let promise = Promise.resolve();
+      path.slice(1).forEach((hopAddr) => {
+        promise = promise.then(() => {
+          const targetNode = cy.$(`#${hopAddr}`);
+          if (!targetNode.length) return Promise.resolve();
+
+          const targetPos = targetNode.position();
+          targetNode.addClass('node-active-hop');
+
+          return (particle.animation({
+            position: { x: targetPos.x, y: targetPos.y },
+            duration: 600
+          } as any)).play().promise().then(() => {
+            targetNode.removeClass('node-active-hop');
+          });
+        });
+      });
+
+      promise.finally(() => {
+        particle.remove();
+        const destNode = cy.$(`#${path[path.length - 1]}`);
+        if (destNode.length) {
+          destNode.addClass('packet-delivered-flash');
+          setTimeout(() => destNode.removeClass('packet-delivered-flash'), 1000);
+        }
+      });
+    };
+
+    socket.on('simulation_status', (data: { running: boolean }) => {
+      setSimRunning(data.running);
+    });
+
+    const appendBlockLocal = (addr: string, packetId: number, eventType: string, src: string, dst: string) => {
+      setSelected(prev => {
+        if (!prev || prev.node.address !== addr) return prev;
+        const curChain = prev.localBlockchain || [];
+        const mockBlock = {
+          index: curChain.length,
+          timestamp: Date.now(),
+          nodeId: addr,
+          packetId,
+          eventType,
+          sourceNode: src,
+          destinationNode: dst,
+          hash: 'live_' + Math.random().toString(16).slice(2, 8)
+        };
+        return { ...prev, localBlockchain: [...curChain, mockBlock] };
+      });
+    };
+
+    socket.on('packet_sent', (data: any) => {
+      setSimPackets(prev => prev + 1);
+      if (data.path) animatePacket(data.path);
+      appendBlockLocal(data.src, data.packetId, 'packet_sent', data.src, data.dst);
+    });
+
+    socket.on('packet_forwarded', (data: any) => {
+      appendBlockLocal(data.node, data.packetId, 'packet_forwarded', data.src, data.dst);
+    });
+
+    socket.on('packet_delivered', (data: any) => {
+      appendBlockLocal(data.dst, data.packetId, 'packet_received', data.src, data.dst);
+    });
+
+    socket.on('packet_dropped', (data: any) => {
+      appendBlockLocal(data.node, data.packetId, 'packet_blocked', data.src, data.dst);
+    });
+
+    socket.on('simulation_stats', (data: { activePackets: number; totalGenerated: number }) => {
+      setSimPackets(data.totalGenerated);
+    });
+
     return () => { socket.disconnect(); };
   }, []);
 
@@ -360,6 +478,42 @@ const NetworkDashboardPage = () => {
     } finally {
       setLoadingAttack(false);
     }
+  };
+
+  const handleStartSim = async () => {
+    try {
+      await axios.post(`${SOCKET_URL}/api/simulator/start`);
+      setSimRunning(true);
+      setSimMsg('Simulation running — auto-generating network traffic.');
+    } catch (e) { setSimMsg('Failed to start simulation.'); }
+  };
+
+  const handleStopSim = async () => {
+    try {
+      await axios.post(`${SOCKET_URL}/api/simulator/stop`);
+      setSimRunning(false);
+      setSimMsg('Simulation stopped.');
+    } catch (e) { setSimMsg('Failed to stop simulation.'); }
+  };
+
+  const handleSendTestPacket = async () => {
+    if (nodes.length < 2) return;
+    const src = nodes[0].address;
+    const dst = nodes[nodes.length - 1].address;
+    try {
+      const res = await axios.post(`${SOCKET_URL}/api/send-data`, { src, dst, data: 'Manual Test Packet' });
+      setSimMsg(`Test packet #${res.data.packetId} sent: ${src.slice(-4)} → ${dst.slice(-4)}`);
+    } catch (e) { setSimMsg('Failed to send test packet.'); }
+  };
+
+  const handleInjectAttack = async () => {
+    if (nodes.length === 0) return;
+    // Pick a random healthy-ish node
+    const target = nodes[Math.floor(Math.random() * nodes.length)];
+    try {
+      await axios.post(`${SOCKET_URL}/api/simulator/attack`, { node: target.address, attackType: 'DDoS' });
+      setSimMsg(`DDoS attack injected on node ${target.address.slice(-4)}`);
+    } catch (e) { setSimMsg('Failed to inject attack.'); }
   };
 
   // ── Node click handler ──────────────────────────────────────────────────
@@ -473,6 +627,49 @@ const NetworkDashboardPage = () => {
               <span className="text-secondary" style={{ fontSize: '11px' }}>{label}</span>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* 🎛️ Simulation Control Panel */}
+      <div className="mb-4 p-3 rounded border border-secondary border-opacity-25" style={{ background: 'rgba(0,0,0,0.3)' }}>
+        <div className="d-flex align-items-center justify-content-between flex-wrap gap-3">
+          <div className="d-flex align-items-center gap-3">
+            {/* Status indicator */}
+            <div className="d-flex align-items-center gap-2">
+              <span className="position-relative d-inline-flex">
+                <span className={`rounded-circle d-inline-block`} style={{ width: 10, height: 10, backgroundColor: simRunning ? '#198754' : '#6c757d', boxShadow: simRunning ? '0 0 0 4px rgba(25,135,84,0.25)' : 'none', animation: simRunning ? 'pulse 1.5s infinite' : 'none' }} />
+              </span>
+              <span className="fw-semibold" style={{ fontSize: '13px', color: simRunning ? '#198754' : '#6c757d' }}>
+                {simRunning ? 'SIMULATION LIVE' : 'SIMULATION IDLE'}
+              </span>
+            </div>
+            {simRunning && (
+              <Badge bg="success" className="bg-opacity-10 border border-success border-opacity-25 text-success" style={{ fontSize: '11px' }}>
+                {simPackets} packets generated
+              </Badge>
+            )}
+            {simMsg && (
+              <span className="text-secondary" style={{ fontSize: '11px' }}>{simMsg}</span>
+            )}
+          </div>
+          {/* Control buttons */}
+          <div className="d-flex gap-2 flex-wrap">
+            {!simRunning ? (
+              <Button size="sm" variant="success" className="d-flex align-items-center gap-1" onClick={handleStartSim}>
+                <Activity size={13} /> Start Simulation
+              </Button>
+            ) : (
+              <Button size="sm" variant="secondary" className="d-flex align-items-center gap-1" onClick={handleStopSim}>
+                <X size={13} /> Stop Simulation
+              </Button>
+            )}
+            <Button size="sm" variant="outline-info" className="d-flex align-items-center gap-1" onClick={handleSendTestPacket}>
+              <Wifi size={13} /> Send Test Packet
+            </Button>
+            <Button size="sm" variant="outline-danger" className="d-flex align-items-center gap-1" onClick={handleInjectAttack}>
+              <ShieldAlert size={13} /> Inject Attack
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -663,6 +860,52 @@ const NetworkDashboardPage = () => {
                     />
                   </div>
                 </div>
+
+                {/* 📊 Packet Transfer Statistics */}
+                {(() => {
+                  const stats = { sent: 0, received: 0, forwarded: 0, dropped: 0 };
+                  if (selected.localBlockchain) {
+                    selected.localBlockchain.forEach((b: any) => {
+                      if (b.eventType === 'packet_sent') stats.sent++;
+                      else if (b.eventType === 'packet_received') stats.received++;
+                      else if (b.eventType === 'packet_forwarded') stats.forwarded++;
+                      else if (b.eventType === 'packet_blocked') stats.dropped++;
+                    });
+                  }
+                  return (
+                    <div className="pt-3 border-top border-secondary border-opacity-25">
+                      <p className="text-secondary mb-2 d-flex align-items-center gap-1 small">
+                        <Activity size={13} className="text-warning" /> Live Packet Statistics
+                      </p>
+                      <div className="row row-cols-2 g-2">
+                        <div className="col">
+                          <div className="p-2 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 text-center">
+                            <span className="text-secondary d-block mb-1" style={{ fontSize: '10px' }}>Sent</span>
+                            <h6 className="text-primary fw-bold mb-0">{stats.sent}</h6>
+                          </div>
+                        </div>
+                        <div className="col">
+                          <div className="p-2 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 text-center">
+                            <span className="text-secondary d-block mb-1" style={{ fontSize: '10px' }}>Received</span>
+                            <h6 className="text-success fw-bold mb-0">{stats.received}</h6>
+                          </div>
+                        </div>
+                        <div className="col">
+                          <div className="p-2 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 text-center">
+                            <span className="text-secondary d-block mb-1" style={{ fontSize: '10px' }}>Forwarded</span>
+                            <h6 className="text-info fw-bold mb-0">{stats.forwarded}</h6>
+                          </div>
+                        </div>
+                        <div className="col">
+                          <div className="p-2 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 text-center">
+                            <span className="text-secondary d-block mb-1" style={{ fontSize: '10px' }}>Dropped</span>
+                            <h6 className="text-danger fw-bold mb-0">{stats.dropped}</h6>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* 🛡️ Secure 6G Processing Pipeline Panels */}
                 {selected.node.pipelineStages && selected.node.pipelineStages.length > 0 && (
