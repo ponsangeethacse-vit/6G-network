@@ -21,8 +21,19 @@ contract TrustLedger {
         bool isBlocked;
     }
 
+    struct TransferRecord {
+        address sender;
+        address receiver;
+        string details;
+        uint256 trustUpdate;
+        uint256 timestamp;
+    }
+
     mapping(address => TrustData) public trustScores;
     mapping(address => TrustRecord[]) public trustHistory;
+    TransferRecord[] public globalTransfers;
+    
+    event TransferLogged(address indexed sender, address indexed receiver, string details, uint256 trustUpdate);
     
     uint256 public anomalyThreshold = 60; // < 0.6 is suspicious
 
@@ -102,5 +113,33 @@ contract TrustLedger {
 
     function isNodeBlocked(address _node) external view returns (bool) {
         return trustScores[_node].isBlocked;
+    }
+
+    function logTransfer(address _sender, address _receiver, string calldata _details, uint256 _trustUpdate) external onlyOwner {
+        require(registry.isNodeRegistered(_sender), "Sender not registered");
+        require(registry.isNodeRegistered(_receiver), "Receiver not registered");
+
+        globalTransfers.push(TransferRecord({
+            sender: _sender,
+            receiver: _receiver,
+            details: _details,
+            trustUpdate: _trustUpdate,
+            timestamp: block.timestamp
+        }));
+
+        // Automatically update node trust records on-chain
+        trustScores[_sender].fusionTrustScore = _trustUpdate;
+        trustScores[_sender].lastUpdated = block.timestamp;
+
+        trustHistory[_sender].push(TrustRecord({
+            nodeId: _sender,
+            fusionTrustScore: _trustUpdate,
+            attackType: _details,
+            timestamp: block.timestamp,
+            isBlocked: trustScores[_sender].isBlocked
+        }));
+
+        emit TransferLogged(_sender, _receiver, _details, _trustUpdate);
+        emit TrustUpdated(_sender, _trustUpdate); // emit existing event
     }
 }

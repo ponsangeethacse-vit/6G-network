@@ -14,6 +14,13 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
+// ─── 6G Node Management & Transfer Routes ───────────────────────────────────
+const nodesRouter = require('./routes/nodes');
+const transfersRouter = require('./routes/transfers');
+
+app.use('/api/admin/nodes', nodesRouter);
+app.use('/api/admin/transfers', transfersRouter);
+
 // ─── Mock 6G Node Registry ────────────────────────────────────────────────────
 const MOCK_NODES = Array.from({ length: 20 }, (_, i) => {
   const hex = (i + 1).toString(16).padStart(40, '0');

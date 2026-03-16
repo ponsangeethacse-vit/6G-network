@@ -9,6 +9,7 @@ import TrustScoreVisualizationPage from './pages/TrustScoreVisualizationPage';
 import AttackDetectionMonitorPage from './pages/AttackDetectionMonitorPage';
 import BlockchainTransactionViewerPage from './pages/BlockchainTransactionViewerPage';
 import NodeManagementPanelPage from './pages/NodeManagementPanelPage';
+import NodeTransferPage from './pages/NodeTransferPage';
 
 const SOCKET_SERVER_URL = 'http://localhost:4000';
 
@@ -88,6 +89,7 @@ function App() {
           <Route path="/dashboard/alerts" element={<AttackDetectionMonitorPage />} />
           <Route path="/dashboard/blockchain" element={<BlockchainTransactionViewerPage />} />
           <Route path="/dashboard/nodes" element={<NodeManagementPanelPage />} />
+          <Route path="/dashboard/transfers" element={<NodeTransferPage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

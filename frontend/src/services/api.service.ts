@@ -88,6 +88,16 @@ export const NodeService = {
       throw handleApiError(error);
     }
   },
+  
+  // ─── Admin Nodes ───────────────────────────────────────────────────────────
+  getAdminNodes: async (): Promise<any[]> => {
+    try {
+      const resp = await api.get('/admin/nodes');
+      return resp.data;
+    } catch (error) {
+      throw handleApiError(error);
+    }
+  },
 };
 
 export const TrustService = {
@@ -116,6 +126,25 @@ export const TransactionService = {
   getTransactions: async (params?: { limit?: number; nodeId?: string; action?: string }): Promise<BlockchainTransaction[]> => {
     try {
       const resp = await api.get('/transactions', { params });
+      return resp.data;
+    } catch (error) {
+      throw handleApiError(error);
+    }
+  },
+
+  // ─── Admin Transfers ───────────────────────────────────────────────────────
+  getAdminTransfers: async (): Promise<any[]> => {
+    try {
+      const resp = await api.get('/admin/transfers');
+      return resp.data;
+    } catch (error) {
+      throw handleApiError(error);
+    }
+  },
+
+  executeTransfer: async (data: { senderNodeId: string; receiverNodeId: string; data: string; behavior?: string }): Promise<any> => {
+    try {
+      const resp = await api.post('/admin/transfers', data);
       return resp.data;
     } catch (error) {
       throw handleApiError(error);

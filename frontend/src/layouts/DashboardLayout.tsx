@@ -1,7 +1,7 @@
 import React from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Navbar, Container, Button, Badge } from 'react-bootstrap';
-import { Shield, ShieldAlert, Activity, Navigation, BarChart3, Lock, Database, Server, LogOut } from 'lucide-react';
+import { Shield, ShieldAlert, Activity, Navigation, BarChart3, Lock, Database, Server, LogOut, ArrowLeftRight } from 'lucide-react';
 
 interface DashboardLayoutProps {
   socket: any;
@@ -32,6 +32,7 @@ const DashboardLayout = ({
     { path: '/dashboard/trust', label: 'Trust Scores', icon: <BarChart3 size={18} /> },
     { path: '/dashboard/alerts', label: 'Attack Monitor', icon: <Lock size={18} /> },
     { path: '/dashboard/blockchain', label: 'Blockchain Ledger', icon: <Database size={18} /> },
+    { path: '/dashboard/transfers', label: 'Node Transfers', icon: <ArrowLeftRight size={18} /> },
     { path: '/dashboard/nodes', label: 'Node Management', icon: <Server size={18} /> },
   ];
 
