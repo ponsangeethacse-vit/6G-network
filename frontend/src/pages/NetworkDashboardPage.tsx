@@ -22,7 +22,7 @@ interface NetworkNode {
   address: string;
   role: number;
   trustScore?: number;   // 0–100
-  status?: 'trusted' | 'suspicious' | 'malicious' | 'isolated';
+  status?: 'healthy' | 'suspicious' | 'under_investigation' | 'malicious' | 'isolated';
 }
 
 interface TxRecord {
@@ -41,24 +41,30 @@ interface SelectedPanel {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-const classify = (score: number): NetworkNode['status'] =>
-  score >= 70 ? 'trusted' : score >= 40 ? 'suspicious' : 'malicious';
+const classify = (score: number): NetworkNode['status'] => {
+  if (score > 80) return 'healthy';
+  if (score >= 60) return 'suspicious';
+  if (score >= 40) return 'under_investigation';
+  return 'malicious';
+};
 
 const nodeColor = (status?: NetworkNode['status']) => {
   switch (status) {
-    case 'trusted':    return '#198754';  // green
-    case 'suspicious': return '#ffc107';  // yellow
-    case 'malicious':  return '#dc3545';  // red
-    default:           return '#0d6efd';  // blue (loading)
+    case 'healthy':             return '#198754';  // green
+    case 'suspicious':          return '#ffc107';  // yellow
+    case 'under_investigation': return '#fd7e14';  // orange
+    case 'malicious':           return '#dc3545';  // red
+    default:                    return '#0d6efd';  // blue (loading)
   }
 };
 
 const nodeBorder = (status?: NetworkNode['status']) => {
   switch (status) {
-    case 'trusted':    return '#0f5132';
-    case 'suspicious': return '#997404';
-    case 'malicious':  return '#842029';
-    default:           return '#084298';
+    case 'healthy':             return '#0f5132';
+    case 'suspicious':          return '#997404';
+    case 'under_investigation': return '#9a4e0e';
+    case 'malicious':           return '#842029';
+    default:                    return '#084298';
   }
 };
 
@@ -81,17 +87,43 @@ const getRoleIcon = (role?: number, size = 18) => {
 };
 
 const StatusBadge = ({ status }: { status?: NetworkNode['status'] }) => {
-  const map = { trusted: 'success', suspicious: 'warning', malicious: 'danger', isolated: 'secondary' };
-  const icons = {
-    trusted: <ShieldCheck size={12} className="me-1" />,
-    suspicious: <ShieldAlert size={12} className="me-1" />,
-    malicious: <ShieldOff size={12} className="me-1" />,
-    isolated: <ShieldOff size={12} className="me-1" />
+  const config = {
+    healthy: { 
+      color: '#198754', bg: 'rgba(25, 135, 84, 0.1)', 
+      icon: <ShieldCheck size={11} className="me-1" />, label: 'Healthy' 
+    },
+    suspicious: { 
+      color: '#ffc107', bg: 'rgba(255, 193, 7, 0.1)', 
+      icon: <ShieldAlert size={11} className="me-1" />, label: 'Suspicious' 
+    },
+    under_investigation: { 
+      color: '#fd7e14', bg: 'rgba(253, 126, 20, 0.1)', 
+      icon: <ShieldAlert size={11} className="me-1" />, label: 'Under Investigation' 
+    },
+    malicious: { 
+      color: '#dc3545', bg: 'rgba(220, 53, 69, 0.1)', 
+      icon: <ShieldOff size={11} className="me-1" />, label: 'Malicious' 
+    },
+    isolated: { 
+      color: '#6c757d', bg: 'rgba(108, 117, 125, 0.1)', 
+      icon: <ShieldOff size={11} className="me-1" />, label: 'Isolated' 
+    }
   };
-  const s = status ?? 'trusted';
+
+  const s = status ?? 'healthy';
+  const item = config[s as keyof typeof config] || config.healthy;
+
   return (
-    <Badge bg={map[s]} className="text-uppercase d-inline-flex align-items-center" style={{ fontSize: '10px' }}>
-      {icons[s]}{s}
+    <Badge 
+      style={{ 
+        backgroundColor: item.bg, 
+        color: item.color, 
+        border: `1px solid ${item.color}33`, 
+        fontSize: '10px' 
+      }} 
+      className="text-uppercase d-inline-flex align-items-center px-2 py-1"
+    >
+      {item.icon}{item.label}
     </Badge>
   );
 };
@@ -177,18 +209,28 @@ const NetworkDashboardPage = () => {
 
   // ── Analytics continuous intervals calculations ──
   useEffect(() => {
-    const interval = setInterval(() => {
+    const tick = () => {
       setAnalyticsData(prev => {
         const avg = nodes.reduce((sum, n) => sum + (n.trustScore || 0), 0) / (nodes.length || 1);
         const maliciousCount = nodes.filter(n => (n.trustScore || 0) < 40).length;
-        const alerts = txLog.filter(t => t.action?.includes('Detected') || t.action?.includes('Revoked')).length;
+        
+        // Rolling 60s frequency
+        const nowMs = Date.now();
+        const alertsRate = txLog.filter(t => {
+          if (!t.timestamp) return false;
+          return (nowMs - t.timestamp < 60000) && (t.action?.includes('Detected') || t.action?.includes('Revoked') || t.action?.includes('Suspicious'));
+        }).length;
+
         const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-        const nextData = [...prev, { time: now, avgTrust: Math.round(avg), alerts, maliciousNodes: maliciousCount }];
+        const nextData = [...prev, { time: now, avgTrust: Math.round(avg), alerts: alertsRate, maliciousNodes: maliciousCount }];
         if (nextData.length > 8) return nextData.slice(1);
         return nextData;
       });
-    }, 4000); // 4 seconds density
+    };
+
+    tick();
+    const interval = setInterval(tick, 4000);
 
     return () => clearInterval(interval);
   }, [nodes, txLog]);
@@ -204,18 +246,21 @@ const NetworkDashboardPage = () => {
       },
     }));
 
-    // Build a deterministic mesh (every node connects to 2 others)
+    // 🕸️ Build a circular Ring Mesh layout supporting 20+ nodes beautifully
     const cyEdges: any[] = [];
     for (let i = 0; i < ns.length; i++) {
-      for (let j = i + 1; j < ns.length; j++) {
-        cyEdges.push({
-          data: {
-            id: `e-${ns[i].address}-${ns[j].address}`,
-            source: ns[i].address,
-            target: ns[j].address,
-          },
-        });
-      }
+       const next = (i + 1) % ns.length;
+       cyEdges.push({
+         data: { id: `e1-${ns[i].address}-${ns[next].address}`, source: ns[i].address, target: ns[next].address }
+       });
+
+       // Add secondary cross-links for meshes scaling stability
+       const skip = (i + 2) % ns.length;
+       if (ns.length > 4) {
+         cyEdges.push({
+           data: { id: `e2-${ns[i].address}-${ns[skip].address}`, source: ns[i].address, target: ns[skip].address }
+         });
+       }
     }
     return [...cyNodes, ...cyEdges];
   }, []);
@@ -305,7 +350,7 @@ const NetworkDashboardPage = () => {
         if (!prev) return prev;
         return {
           ...prev,
-          node: { ...prev.node, status: stop ? 'trusted' : 'malicious' },
+          node: { ...prev.node, status: stop ? 'healthy' : 'malicious' },
         };
       });
     } catch (e) {
@@ -353,11 +398,11 @@ const NetworkDashboardPage = () => {
 
   const elements = buildElements(nodes);
   const scoreColor = (score?: number) =>
-    !score ? 'secondary' : score >= 60 ? 'success' : score >= 40 ? 'warning' : 'danger';
+    !score ? 'secondary' : score > 80 ? 'success' : score >= 60 ? 'warning' : score >= 40 ? 'warning' : 'danger';
 
   // Stats
   const totalAttacks = txLog.filter(t => t.action?.includes('Revoked') || t.action?.includes('Detected')).length;
-  const underAttackNodes = nodes.filter(n => n.status === 'malicious' || n.status === 'suspicious' || (n.trustScore && n.trustScore < 60)).length;
+  const underAttackNodes = nodes.filter(n => n.status === 'malicious' || n.status === 'suspicious' || n.status === 'under_investigation' || (n.trustScore && n.trustScore <= 80)).length;
   const isolatedNodes = nodes.filter(n => n.status === 'isolated').length;
 
   // ── Chart Config ──
@@ -374,7 +419,7 @@ const NetworkDashboardPage = () => {
         pointRadius: 1,
       },
       {
-        label: 'Alerts',
+        label: 'Attacks / Min',
         data: analyticsData.map(d => d.alerts),
         borderColor: '#ea580c', // Orange
         backgroundColor: 'rgba(234, 88, 12, 0.1)',
@@ -711,7 +756,7 @@ const NetworkDashboardPage = () => {
                       </h4>
                    </div>
                    <div className="p-3 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-10 shadow-sm">
-                      <span className="text-secondary small d-block mb-1">Total Network Alerts</span>
+                      <span className="text-secondary small d-block mb-1">Attacks (Last Minute)</span>
                       <h4 className="text-warning fw-bold mb-0">
                         {analyticsData.length > 0 ? analyticsData[analyticsData.length - 1].alerts : '--'}
                       </h4>

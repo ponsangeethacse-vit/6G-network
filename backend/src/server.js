@@ -15,12 +15,13 @@ app.use(cors());
 app.use(express.json());
 
 // ─── Mock 6G Node Registry ────────────────────────────────────────────────────
-const MOCK_NODES = [
-  { address: '0x1111111111111111111111111111111111111111', role: 1 }, // IoT Device
-  { address: '0x2222222222222222222222222222222222222222', role: 2 }, // Base Station
-  { address: '0x3333333333333333333333333333333333333333', role: 3 }, // Cellular Relay
-  { address: '0x9999999999999999999999999999999999999999', role: 1 }, // Malicious Node
-];
+const MOCK_NODES = Array.from({ length: 20 }, (_, i) => {
+  const hex = (i + 1).toString(16).padStart(40, '0');
+  let role = 1; // Default IoT
+  if (i >= 14 && i < 17) role = 2; // High Traffic (Base Station proxy)
+  else if (i >= 17 && i < 19) role = 3; // Unstable (Relay proxy)
+  return { address: `0x${hex}`, role };
+});
 
 // ─── In-Memory Trust & Blockchain State ───────────────────────────────────────
 const trustScores = {};      // address -> current score (0-100)
@@ -309,6 +310,15 @@ app.post('/api/nodes/:addr/trust', (req, res) => {
 app.post('/api/simulator/attack', (req, res) => {
   const { node, attackType } = req.body;
   if (node) {
+    // 🔬 Containment Rule 6: Max 15% Malicious Simulator Limit
+    const maliciousCount = Object.values(activeAttacks).filter(a => a !== 'Normal' && a !== 'Normal Traffic').length;
+    const maxAllowed = Math.ceil(MOCK_NODES.length * 0.15);
+
+    if (attackType !== 'Normal' && maliciousCount >= maxAllowed && !activeAttacks[node]) {
+       console.log(`[Simulator] 🛡️ Manual Attack Blocked for ${node.slice(0,6)} (Limit of ${maxAllowed} reached)`);
+       return res.status(400).json({ error: `Attack limit reached (${maxAllowed}). Stop previous attacks first.` });
+    }
+
     activeAttacks[node] = attackType;
     console.log(`[Simulator] ⚔️ Attack [${attackType}] triggered on ${node}`);
     io.emit('simulator_mode', { node, attackType, isMaliciousMode: true });
@@ -351,9 +361,22 @@ server.listen(PORT, () => {
 
   // 🎲 Stochastic Attack Generator (Every 5-10 seconds)
   setInterval(() => {
+    const maliciousCount = Object.values(activeAttacks).filter(a => a !== 'Normal' && a !== 'Normal Traffic').length;
+    const maxAllowed = Math.ceil(MOCK_NODES.length * 0.15); // Max 15% (e.g., 1 node)
+
     const node = MOCK_NODES[Math.floor(Math.random() * MOCK_NODES.length)].address;
     const rand = Math.random();
-    
+
+    if (maliciousCount >= maxAllowed) {
+       // Stop generating NEW attacks. If picked node is malicious, allow healing to Normal
+       if (activeAttacks[node] && activeAttacks[node] !== 'Normal' && rand < 0.50) {
+          delete activeAttacks[node];
+          console.log(`[Stochastic] 🛡️ Node ${node.slice(0,6)} forced back to Normal for recovery balancer.`);
+          io.emit('simulator_mode', { node, attackType: 'Normal', isMaliciousMode: false });
+       }
+       return;
+    }
+
     if (rand < 0.10) { // 10% Malicious
       const attacks = ['DDoS', 'Sybil', 'DataManipulation', 'PacketFlooding'];
       const chosen = attacks[Math.floor(Math.random() * attacks.length)];

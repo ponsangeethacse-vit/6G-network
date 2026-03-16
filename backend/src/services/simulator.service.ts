@@ -6,12 +6,19 @@ import EventEmitter from 'events';
 export const simulatorEvents = new EventEmitter();
 
 // Mock 6G Nodes
-const NODES = [
-  '0x1111111111111111111111111111111111111111', // IoT Device (Normal)
-  '0x2222222222222222222222222222222222222222', // Edge Server (Normal)
-  '0x3333333333333333333333333333333333333333', // User Eq (Normal)
-  '0x9999999999999999999999999999999999999999', // Malicious Node (DDoS/Spoofing)
-];
+const NODES = Array.from({ length: 20 }, (_, i) => {
+  const hex = (i + 1).toString(16).padStart(40, '0');
+  return `0x${hex}`;
+});
+
+export const NODE_PROFILES: Record<string, 'Normal' | 'HighTraffic' | 'Unstable' | 'Malicious'> = {};
+
+NODES.forEach((node, i) => {
+  if (i < 14) NODE_PROFILES[node] = 'Normal'; // 70%
+  else if (i < 17) NODE_PROFILES[node] = 'HighTraffic'; // 15%
+  else if (i < 19) NODE_PROFILES[node] = 'Unstable'; // 10%
+  else NODE_PROFILES[node] = 'Malicious'; // 5%
+});
 
 export class TrafficSimulatorService {
   private isRunning = false;
@@ -44,12 +51,29 @@ export class TrafficSimulatorService {
   private async generateTrafficTick() {
     for (const node of NODES) {
       const attack = this.activeAttacks.get(node.toLowerCase()) || 'Normal';
+      const profile = NODE_PROFILES[node] || 'Normal';
       
-      let packetSize = Math.floor(Math.random() * 500) + 100;
-      let packetRate = Math.floor(Math.random() * 20) + 1;
-      let responseTimeMs = Math.floor(Math.random() * 100) + 10;
-      let success = Math.random() > 0.1; // 90% success normally
-      let peerFeedback = 0.8 + (Math.random() * 0.2); // Normal feedback (0.8 - 1.0)
+      // Default Base Metrics (Normal)
+      let packetSize = Math.floor(Math.random() * 300) + 64;
+      let packetRate = Math.floor(Math.random() * 20) + 2;
+      let responseTimeMs = Math.floor(Math.random() * 50) + 5;
+      let success = Math.random() > 0.05; // 95% success normally
+      let peerFeedback = 0.85 + (Math.random() * 0.15); // Normal feedback
+
+      // 🔬 Apply Base Behavior Profile
+      if (profile === 'HighTraffic') {
+        packetSize = Math.floor(Math.random() * 1000) + 400;
+        packetRate = Math.floor(Math.random() * 80) + 40; // High rate
+        responseTimeMs = Math.floor(Math.random() * 15) + 2; // Fast
+      } else if (profile === 'Unstable') {
+        responseTimeMs = Math.floor(Math.random() * 500) + 80; // Latency spikes
+        success = Math.random() > 0.15; // 85% success rate 
+        peerFeedback = 0.65 + (Math.random() * 0.15); 
+      } else if (profile === 'Malicious' && attack === 'Normal') {
+        // Continuous moderate malicious noise if not active in burst attacks
+        success = Math.random() > 0.3; 
+        peerFeedback = 0.4 + (Math.random() * 0.2); 
+      }
 
       if (attack === 'DDoS') {
         packetSize = 5000;
