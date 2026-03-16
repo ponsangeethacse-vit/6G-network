@@ -150,6 +150,15 @@ export const TransactionService = {
       throw handleApiError(error);
     }
   },
+
+  sendPacket: async (data: { src: string; dst: string; data?: string }): Promise<{ success: boolean; packetId: number; path: string[] }> => {
+    try {
+      const resp = await api.post('/send-data', data);
+      return resp.data;
+    } catch (error) {
+      throw handleApiError(error);
+    }
+  }
 };
 
 // ─── Error Handler Utility ────────────────────────────────────────────────────
