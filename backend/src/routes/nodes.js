@@ -1,13 +1,45 @@
 const express = require('express');
 const router = express.Router();
 const Node = require('../models/Node');
+const nodeService = require('../services/nodeService');
 
+// Get all nodes from DB
 router.get('/', async (req, res) => {
   try {
-    const nodes = await Node.find({});
+    const nodes = await nodeService.getNodes();
     res.json(nodes);
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+});
+
+// Create a new node
+router.post('/', async (req, res) => {
+  try {
+    const node = await nodeService.createNode(req.body);
+    res.status(201).json(node);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+// Update node info (trust score, status)
+router.put('/:nodeId', async (req, res) => {
+  try {
+     const node = await nodeService.updateNode(req.params.nodeId, req.body);
+     res.json(node);
+  } catch (err) {
+     res.status(400).json({ message: err.message });
+  }
+});
+
+// View node activity / history
+router.get('/:nodeId/activity', async (req, res) => {
+  try {
+     const activity = await nodeService.getNodeActivity(req.params.nodeId);
+     res.json(activity);
+  } catch (err) {
+     res.status(404).json({ message: err.message });
   }
 });
 
@@ -23,6 +55,7 @@ router.post('/simulate', async (req, res) => {
             nodeId: `NODE_${i}`,
             type,
             trustScore: 0.7 + Math.random() * 0.3,
+            status: 'Normal',
             metrics: {
                 latency: Math.random() * 2,
                 throughput: 50 + Math.random() * 40,

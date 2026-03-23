@@ -36,7 +36,7 @@ export class BlockchainService {
     ];
 
     const trustLedgerAbi = [
-      "function updateTrustScore(address _node, uint256 _newScore) external",
+      "function updateTrustScore(address _node, uint256 _newScore, string calldata _attackType) external",
       "function reportAnomaly(address _node, string calldata _reason) external",
       "function setAnomalyThreshold(uint256 _newThreshold) external",
       "function getTrustScore(address _node) external view returns (uint256, uint256, bool)",

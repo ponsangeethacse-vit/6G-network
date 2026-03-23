@@ -3,6 +3,8 @@ const mongoose = require('mongoose');
 const nodeSchema = new mongoose.Schema({
   nodeId: { type: String, required: true, unique: true },
   type: { type: String, enum: ['IoT', 'Edge', 'Core'], default: 'IoT' },
+  senderAddress: { type: String, default: "" },
+  receiverAddress: { type: String, default: "" },
   trustScore: { type: Number, default: 0.5 },
   metrics: {
     latency: { type: Number, default: 0 },
@@ -12,8 +14,13 @@ const nodeSchema = new mongoose.Schema({
     transTrust: { type: Number, default: 0.5 },
     behaviorTrust: { type: Number, default: 0.5 }
   },
-  status: { type: String, enum: ['active', 'isolated', 'malicious'], default: 'active' },
-  lastSeen: { type: Date, default: Date.now }
-});
+  status: { type: String, enum: ['Normal', 'Suspicious', 'Malicious'], default: 'Normal' },
+  transactionHistory: [{
+    txHash: String,
+    action: String,
+    timestamp: { type: Date, default: Date.now }
+  }],
+  lastSeen: { type: Date, expires: '1h', default: Date.now }
+}, { timestamps: true });
 
 module.exports = mongoose.model('Node', nodeSchema);

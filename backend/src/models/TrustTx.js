@@ -5,7 +5,7 @@ const trustTxSchema = new mongoose.Schema({
   to: { type: String, required: true },
   trustValue: { type: Number, required: true },
   factor: { type: String, required: true },
-  timestamp: { type: Date, default: Date.now }
+  timestamp: { type: Date, expires: '1h', default: Date.now }
 });
 
 module.exports = mongoose.model('TrustTx', trustTxSchema);
