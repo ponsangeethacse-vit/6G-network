@@ -54,9 +54,29 @@ class FederatedAggregationService {
         console.log(`[Aggregation] Fused ${this.currentUpdates.length} updates. Total trust mass: ${totalTrust}`);
         
         this.globalModel = newWeights;
-        this.currentUpdates = []; // clear buffer for next round
+        this.currentUpdates = []; 
 
         return this.globalModel;
+    }
+
+    /**
+     * Checks for outliers in submitted updates (Statistical Poisoning Detection)
+     * @param {Array<number>} modelParams 
+     * @param {Array<number>} globalModel 
+     * @returns {boolean} true if flagged as poisoning
+     */
+    isPoisonedUpdate(modelParams, globalModel) {
+        if (!globalModel || globalModel.length === 0) return false;
+        
+        let distance = 0;
+        for (let i = 0; i < modelParams.length; i++) {
+            const diff = (modelParams[i] || 0) - (globalModel[i] || 0);
+            distance += diff * diff;
+        }
+        
+        const euclideanDistance = Math.sqrt(distance);
+        // If distance from global model is > 2.0 (nominal is < 0.5), flag it
+        return euclideanDistance > 2.0;
     }
 
     getGlobalModel() {

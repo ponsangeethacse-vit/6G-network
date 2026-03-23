@@ -13,10 +13,14 @@ export const api: AxiosInstance = axios.create({
 
 // ─── Shared Response Types ───────────────────────────────────────────────────
 export interface NodeInfo {
-  address: string;
-  role: number;
-  trustScore?: number;
-  status?: string;
+  nodeId: string;
+  address?: string; // fallback
+  type: string;
+  senderAddress: string;
+  receiverAddress: string;
+  trustScore: number;
+  status: string;
+  createdAt?: string;
 }
 
 export interface TrustScore {
@@ -90,9 +94,17 @@ export const NodeService = {
   },
   
   // ─── Admin Nodes ───────────────────────────────────────────────────────────
-  getAdminNodes: async (): Promise<any[]> => {
+  createNode: async (nodeData: Partial<NodeInfo>): Promise<{ success: boolean; node: NodeInfo }> => {
     try {
-      const resp = await api.get('/admin/nodes');
+      const resp = await api.post('/nodes', nodeData);
+      return resp.data;
+    } catch (error) {
+      throw handleApiError(error);
+    }
+  },
+  deleteNode: async (addr: string): Promise<{ success: boolean; message: string }> => {
+    try {
+      const resp = await api.delete(`/nodes/${addr}`);
       return resp.data;
     } catch (error) {
       throw handleApiError(error);

@@ -15,49 +15,49 @@ import { NodeService, TrustService, TransactionService } from '../services/api.s
 const SOCKET_URL = 'http://localhost:4000';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type NodeStatus = 'trusted' | 'suspicious' | 'malicious' | 'isolated';
 type ActionState = 'idle' | 'loading' | 'success' | 'error';
 
 interface ManagedNode {
-  address: string;
-  role: number;
+  nodeId: string;
+  type: string;
+  senderAddress: string;
+  receiverAddress: string;
   trustScore: number;
-  status: NodeStatus;
-  lastActivity: number;
+  status: string;
+  createdAt: string;
   actionState: ActionState;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-const classify = (score: number): NodeStatus =>
-  score === 0 ? 'isolated' : score >= 70 ? 'trusted' : score >= 40 ? 'suspicious' : 'malicious';
+type NodeStatus = 'trusted' | 'suspicious' | 'malicious' | 'isolated' | 'active' | 'removed';
 
-const getRoleLabel = (role?: number) => {
-  switch (role) {
-    case 1: return 'IoT Edge Device';
-    case 2: return 'Base Station';
-    case 3: return 'Cellular Relay';
-    default: return 'Unknown';
-  }
+const classify = (score: number, status?: string): NodeStatus => {
+  if (status?.toLowerCase() === 'removed') return 'removed';
+  if (status?.toLowerCase() === 'active') return 'active';
+  return score === 0 ? 'isolated' : score >= 70 ? 'trusted' : score >= 40 ? 'suspicious' : 'malicious';
 };
 
-const getRoleIcon = (role?: number, size = 15) => {
-  switch (role) {
-    case 1: return <Smartphone size={size} className="text-info me-2" />;
-    case 2: return <Server size={size} className="text-primary me-2" />;
-    case 3: return <Cpu size={size} className="text-warning me-2" />;
+const getRoleIcon = (type: string, size = 15) => {
+  switch (type) {
+    case 'User Device': return <Smartphone size={size} className="text-info me-2" />;
+    case 'Base Station': return <Server size={size} className="text-primary me-2" />;
+    case 'Edge Node': return <Cpu size={size} className="text-warning me-2" />;
     default: return <Activity size={size} className="text-secondary me-2" />;
   }
 };
 
-const STATUS_STYLE: Record<NodeStatus, { bg: string; color: string; icon: React.ReactNode; label: string }> = {
+const STATUS_STYLE: Record<string, { bg: string; color: string; icon: React.ReactNode; label: string }> = {
   trusted:    { bg: 'success', color: 'text-success', icon: <ShieldCheck size={12} className="me-1" />,  label: 'Trusted'    },
   suspicious: { bg: 'warning', color: 'text-warning', icon: <ShieldAlert size={12} className="me-1" />,  label: 'Suspicious' },
   malicious:  { bg: 'danger',  color: 'text-danger',  icon: <ShieldX size={12} className="me-1" />,     label: 'Malicious'  },
   isolated:   { bg: 'dark',    color: 'text-secondary',icon: <ShieldOff size={12} className="me-1" />,   label: 'Isolated'   },
+  active:      { bg: 'info',    color: 'text-info',     icon: <Activity size={12} className="me-1" />,    label: 'Active'      },
+  removed:     { bg: 'secondary',color: 'text-secondary',icon: <ShieldOff size={12} className="me-1" />,   label: 'Removed'     },
 };
 
-const StatusBadge = ({ status }: { status: NodeStatus }) => {
-  const s = STATUS_STYLE[status];
+const StatusBadge = ({ status, score }: { status: string; score: number }) => {
+  const sKey = classify(score, status);
+  const s = STATUS_STYLE[sKey] || STATUS_STYLE.active;
   return (
     <Badge bg={s.bg} className="text-uppercase d-inline-flex align-items-center" style={{ fontSize: '10px' }}>
       {s.icon}{s.label}
@@ -85,7 +85,7 @@ interface UpdateModalProps {
   node: ManagedNode | null;
   show: boolean;
   onHide: () => void;
-  onSave: (addr: string, score: number) => void;
+  onSave: (nodeId: string, score: number) => void;
 }
 const UpdateTrustModal = ({ node, show, onHide, onSave }: UpdateModalProps) => {
   const [score, setScore] = useState(node?.trustScore ?? 75);
@@ -102,7 +102,7 @@ const UpdateTrustModal = ({ node, show, onHide, onSave }: UpdateModalProps) => {
       <Modal.Body>
         <p className="text-secondary small mb-3">
           Manually set the trust score for:{' '}
-          <span className="font-monospace text-info">{node?.address.slice(0, 16)}…</span>
+          <span className="font-monospace text-info">{node?.nodeId}</span>
         </p>
         <Form.Group>
           <Form.Label className="small text-secondary">New Trust Score: <strong className="text-light">{score}%</strong></Form.Label>
@@ -121,7 +121,7 @@ const UpdateTrustModal = ({ node, show, onHide, onSave }: UpdateModalProps) => {
       </Modal.Body>
       <Modal.Footer className="border-secondary">
         <Button variant="outline-secondary" size="sm" onClick={onHide}>Cancel</Button>
-        <Button variant="primary" size="sm" onClick={() => { node && onSave(node.address, score); onHide(); }}>
+        <Button variant="primary" size="sm" onClick={() => { node && onSave(node.nodeId, score); onHide(); }}>
           Apply & Record on Chain
         </Button>
       </Modal.Footer>
@@ -140,7 +140,7 @@ const BlockchainRecordModal = ({ node, records, show, onHide }: BlockchainModalP
   <Modal show={show} onHide={onHide} centered size="lg" contentClassName="bg-dark border border-secondary text-light">
     <Modal.Header className="border-secondary">
       <Modal.Title className="fs-6 d-flex align-items-center gap-2">
-        <Database size={16} className="text-info" /> Blockchain Records — {node?.address.slice(0, 14)}…
+        <Database size={16} className="text-info" /> Blockchain Records — {node?.nodeId}
       </Modal.Title>
       <button className="btn-close btn-close-white" onClick={onHide} />
     </Modal.Header>
@@ -182,16 +182,107 @@ const BlockchainRecordModal = ({ node, records, show, onHide }: BlockchainModalP
   </Modal>
 );
 
+// ─── Add Node Modal ───────────────────────────────────────────────────────────
+interface AddModalProps {
+  show: boolean;
+  onHide: () => void;
+  onSave: (nodeData: any) => void;
+}
+const AddNodeModal = ({ show, onHide, onSave }: AddModalProps) => {
+  const [formData, setFormData] = useState({
+    nodeId: `NODE_${Math.floor(Math.random() * 1000)}`,
+    type: 'IoT Device',
+    senderAddress: '0x' + Array.from({length: 40}, () => Math.floor(Math.random() * 16).toString(16)).join(''),
+    receiverAddress: '0x' + Array.from({length: 40}, () => Math.floor(Math.random() * 16).toString(16)).join(''),
+    trustScore: 80
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSave(formData);
+    onHide();
+  };
+
+  return (
+    <Modal show={show} onHide={onHide} centered contentClassName="bg-dark border border-secondary text-light">
+      <Modal.Header className="border-secondary">
+        <Modal.Title className="fs-6 d-flex align-items-center gap-2">
+          <Activity size={16} className="text-success" /> Initialize New Node
+        </Modal.Title>
+        <button className="btn-close btn-close-white" onClick={onHide} />
+      </Modal.Header>
+      <Form onSubmit={handleSubmit}>
+        <Modal.Body>
+          <Row className="g-3">
+            <Col md={12}>
+              <Form.Label className="small text-secondary">Node ID</Form.Label>
+              <Form.Control 
+                className="bg-dark border-secondary text-light" 
+                value={formData.nodeId} 
+                onChange={e => setFormData({...formData, nodeId: e.target.value})}
+                required 
+              />
+            </Col>
+            <Col md={12}>
+              <Form.Label className="small text-secondary">Node Type</Form.Label>
+              <Form.Select 
+                className="bg-dark border-secondary text-light"
+                value={formData.type}
+                onChange={e => setFormData({...formData, type: e.target.value})}
+              >
+                <option>IoT Device</option>
+                <option>User Device</option>
+                <option>Edge Node</option>
+                <option>Base Station</option>
+              </Form.Select>
+            </Col>
+            <Col md={6}>
+              <Form.Label className="small text-secondary">Sender Address</Form.Label>
+              <Form.Control 
+                className="bg-dark border-secondary text-light font-monospace small" 
+                value={formData.senderAddress} 
+                onChange={e => setFormData({...formData, senderAddress: e.target.value})}
+                required 
+              />
+            </Col>
+            <Col md={6}>
+              <Form.Label className="small text-secondary">Receiver Address</Form.Label>
+              <Form.Control 
+                className="bg-dark border-secondary text-light font-monospace small" 
+                value={formData.receiverAddress} 
+                onChange={e => setFormData({...formData, receiverAddress: e.target.value})}
+                required 
+              />
+            </Col>
+            <Col md={12}>
+              <Form.Label className="small text-secondary">Initial Trust Score: {formData.trustScore}%</Form.Label>
+              <Form.Range 
+                min={0} max={100} value={formData.trustScore}
+                onChange={e => setFormData({...formData, trustScore: Number(e.target.value)})}
+              />
+            </Col>
+          </Row>
+        </Modal.Body>
+        <Modal.Footer className="border-secondary">
+          <Button variant="outline-secondary" size="sm" onClick={onHide}>Cancel</Button>
+          <Button variant="success" size="sm" type="submit">Initialize Node</Button>
+        </Modal.Footer>
+      </Form>
+    </Modal>
+  );
+};
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 const NodeManagementPanelPage = () => {
   const [nodes, setNodes]             = useState<ManagedNode[]>([]);
   const [loading, setLoading]         = useState(true);
   const [search, setSearch]           = useState('');
-  const [statusFilter, setFilter]     = useState<NodeStatus | 'all'>('all');
+  const [statusFilter, setFilter]     = useState<string | 'all'>('all');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [toast, setToast]             = useState<{ msg: string; variant: string } | null>(null);
 
   // Modals
+  const [addModal, setAddModal]         = useState(false);
   const [updateModal, setUpdateModal]   = useState(false);
   const [chainModal, setChainModal]     = useState(false);
   const [selectedNode, setSelectedNode] = useState<ManagedNode | null>(null);
@@ -201,32 +292,29 @@ const NodeManagementPanelPage = () => {
   const fetchNodes = useCallback(async () => {
     try {
       const data = await NodeService.getNodes();
-      const raw = data.nodes ?? [];
+      const raw = Array.isArray(data) ? data : (data.nodes ?? []);
 
       const [tsData, txData] = await Promise.all([
         TrustService.getTrustScores().catch(() => []),
         TransactionService.getTransactions({ limit: 100 }).catch(() => []),
       ]);
 
-      // Map trust scores by address
+      // Map trust scores by nodeId
       const tsMap: Record<string, number> = {};
-      tsData.forEach((t: any) => { tsMap[t.address] = Math.round(t.trustScore * 100); });
-
-      // Map last activity by address
-      const actMap: Record<string, number> = {};
-      txData.forEach((t: any) => {
-        if (!actMap[t.nodeId] || t.timestamp > actMap[t.nodeId]) actMap[t.nodeId] = Number(t.timestamp);
-      });
+      tsData.forEach((t: any) => { tsMap[t.nodeId || t.address] = Math.round(t.trustScore * 100); });
 
       const enriched: ManagedNode[] = raw.map((n: any) => {
-        const score = tsMap[n.address] ?? 85;
+        const nodeId = n.nodeId || n.address;
+        const score = n.trustScore !== undefined ? Math.round(n.trustScore * 100) : (tsMap[nodeId] ?? 85);
         return {
-          address: n.address,
-          role: n.role,
+          nodeId: nodeId,
+          type: n.type || 'IoT Device',
+          senderAddress: n.senderAddress || 'N/A',
+          receiverAddress: n.receiverAddress || 'N/A',
           trustScore: score,
-          status: classify(score),
-          lastActivity: actMap[n.address] ?? Date.now(),
-          actionState: 'idle',
+          status: n.status || 'Active',
+          createdAt: n.createdAt || new Date().toISOString(),
+          actionState: 'idle' as ActionState,
         };
       });
 
@@ -244,15 +332,15 @@ const NodeManagementPanelPage = () => {
     const socket = io(SOCKET_URL);
     socket.on('trust_update', (tick: { node: string; trustScore: number }) => {
       setNodes(prev => prev.map(n =>
-        n.address === tick.node
-          ? { ...n, trustScore: tick.trustScore, status: classify(tick.trustScore), lastActivity: Date.now() }
+        n.nodeId === tick.node
+          ? { ...n, trustScore: tick.trustScore, status: classify(tick.trustScore, n.status), lastActivity: Date.now() }
           : n
       ));
     });
     socket.on('node_action', (evt: { addr: string; trustScore: number; action: string }) => {
       setNodes(prev => prev.map(n =>
-        n.address === evt.addr
-          ? { ...n, trustScore: evt.trustScore, status: classify(evt.trustScore), actionState: 'success', lastActivity: Date.now() }
+        n.nodeId === evt.addr
+          ? { ...n, trustScore: evt.trustScore, status: classify(evt.trustScore, n.status), actionState: 'success' }
           : n
       ));
     });
@@ -266,43 +354,48 @@ const NodeManagementPanelPage = () => {
   }, [fetchNodes]);
 
   // ── Admin actions ─────────────────────────────────────────────────────
-  const setNodeState = (addr: string, state: ActionState) =>
-    setNodes(prev => prev.map(n => n.address === addr ? { ...n, actionState: state } : n));
+  const setNodeState = (nodeId: string, state: ActionState) =>
+    setNodes(prev => prev.map(n => n.nodeId === nodeId ? { ...n, actionState: state } : n));
 
   const showToast = (msg: string, variant = 'success') => {
     setToast({ msg, variant });
     setTimeout(() => setToast(null), 3000);
   };
 
-  const handleIsolate = async (node: ManagedNode) => {
-    setNodeState(node.address, 'loading');
+  const handleAddNode = async (formData: any) => {
     try {
-      await NodeService.isolateNode(node.address);
-      showToast(`Node ${node.address.slice(2, 6).toUpperCase()} isolated successfully`);
-    } catch {
-      setNodeState(node.address, 'error');
-      showToast('Failed to isolate node', 'danger');
+      setLoading(true);
+      await NodeService.createNode(formData);
+      showToast(`Node ${formData.nodeId} initialized successfully`);
+      fetchNodes();
+    } catch (e) {
+      showToast(`Failed to initialize node: ${e}`, 'danger');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleRestore = async (node: ManagedNode) => {
-    setNodeState(node.address, 'loading');
+  const handleRemove = async (node: ManagedNode) => {
+    if (!window.confirm(`Are you sure you want to remove node ${node.nodeId}?`)) return;
+    setNodeState(node.nodeId, 'loading');
     try {
-      await NodeService.restoreNode(node.address);
-      showToast(`Node ${node.address.slice(2, 6).toUpperCase()} restored`, 'success');
+      await NodeService.deleteNode(node.nodeId);
+      showToast(`Node ${node.nodeId} removed from network`);
+      fetchNodes();
     } catch {
-      setNodeState(node.address, 'error');
-      showToast('Failed to restore node', 'danger');
+      setNodeState(node.nodeId, 'error');
+      showToast('Failed to remove node', 'danger');
     }
   };
 
-  const handleUpdateTrust = async (addr: string, score: number) => {
-    setNodeState(addr, 'loading');
+  const handleUpdateTrust = async (nodeId: string, score: number) => {
+    setNodeState(nodeId, 'loading');
     try {
-      await NodeService.updateTrustScore(addr, score);
+      await NodeService.updateTrustScore(nodeId, score);
       showToast(`Trust score updated to ${score}%`);
+      fetchNodes();
     } catch {
-      setNodeState(addr, 'error');
+      setNodeState(nodeId, 'error');
       showToast('Failed to update trust score', 'danger');
     }
   };
@@ -310,7 +403,7 @@ const NodeManagementPanelPage = () => {
   const handleViewChain = async (node: ManagedNode) => {
     setSelectedNode(node);
     try {
-      const data = await TransactionService.getTransactions({ nodeId: node.address, limit: 20 });
+      const data = await TransactionService.getTransactions({ nodeId: node.nodeId, limit: 20 });
       setChainRecords(data);
     } catch { setChainRecords([]); }
     setChainModal(true);
@@ -318,17 +411,17 @@ const NodeManagementPanelPage = () => {
 
   // ── Filter & search ──────────────────────────────────────────────────
   const visible = nodes.filter(n => {
-    const matchSearch = !search || n.address.toLowerCase().includes(search.toLowerCase()) || getRoleLabel(n.role).toLowerCase().includes(search.toLowerCase());
-    const matchStatus = statusFilter === 'all' || n.status === statusFilter;
+    const matchSearch = !search || n.nodeId.toLowerCase().includes(search.toLowerCase()) || n.type.toLowerCase().includes(search.toLowerCase());
+    const matchStatus = statusFilter === 'all' || classify(n.trustScore, n.status) === statusFilter;
     return matchSearch && matchStatus;
   });
 
   // ── Summary counts ────────────────────────────────────────────────────
   const counts = {
-    trusted:    nodes.filter(n => n.status === 'trusted').length,
-    suspicious: nodes.filter(n => n.status === 'suspicious').length,
-    malicious:  nodes.filter(n => n.status === 'malicious').length,
-    isolated:   nodes.filter(n => n.status === 'isolated').length,
+    active:     nodes.filter(n => n.status === 'Active' || n.status === 'Normal').length,
+    trusted:    nodes.filter(n => classify(n.trustScore, n.status) === 'trusted').length,
+    malicious:  nodes.filter(n => classify(n.trustScore, n.status) === 'malicious').length,
+    removed:    nodes.filter(n => n.status === 'Removed').length,
   };
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -348,21 +441,26 @@ const NodeManagementPanelPage = () => {
       <div className="d-flex align-items-center justify-content-between mb-4">
         <div>
           <h4 className="text-light fw-bold mb-1">Node Management</h4>
-          <p className="text-secondary small mb-0">Admin panel — isolate, restore, and manage 6G network nodes</p>
+          <p className="text-secondary small mb-0">Admin panel — initialize, remove, and manage 6G network nodes</p>
         </div>
-        <div className="d-flex align-items-center gap-2">
-          {lastUpdated && <span className="text-secondary small d-flex align-items-center gap-1"><RefreshCw size={12} />{lastUpdated.toLocaleTimeString()}</span>}
-          {loading && <Spinner animation="border" variant="primary" size="sm" />}
-          <Button size="sm" variant="outline-secondary" onClick={fetchNodes} style={{ fontSize: '11px' }}>
-            <RefreshCw size={12} className="me-1" />Refresh
+        <div className="d-flex align-items-center gap-3">
+          <Button size="sm" variant="success" onClick={() => setAddModal(true)} className="d-flex align-items-center gap-2">
+            <Activity size={14} /> Initialize Node
           </Button>
+          <div className="d-flex align-items-center gap-2">
+            {lastUpdated && <span className="text-secondary small d-flex align-items-center gap-1"><RefreshCw size={12} />{lastUpdated.toLocaleTimeString()}</span>}
+            {loading && <Spinner animation="border" variant="primary" size="sm" />}
+            <Button size="sm" variant="outline-secondary" onClick={fetchNodes} style={{ fontSize: '11px' }}>
+              <RefreshCw size={12} className="me-1" />Refresh
+            </Button>
+          </div>
         </div>
       </div>
 
       {/* Summary pills */}
       <Row className="g-3 mb-4">
-        {(Object.entries(counts) as [NodeStatus, number][]).map(([status, count]) => {
-          const s = STATUS_STYLE[status];
+        {(Object.entries(counts) as [string, number][]).map(([status, count]) => {
+          const s = STATUS_STYLE[status] || STATUS_STYLE.active;
           return (
             <Col key={status} xs={6} md={3}>
               <Card
@@ -389,7 +487,7 @@ const NodeManagementPanelPage = () => {
           <Search size={14} className="position-absolute text-secondary" style={{ top: '50%', left: 10, transform: 'translateY(-50%)' }} />
           <Form.Control
             type="text"
-            placeholder="Search by address or role…"
+            placeholder="Search by ID or Type…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="bg-dark text-light border-secondary ps-4"
@@ -397,14 +495,14 @@ const NodeManagementPanelPage = () => {
           />
         </div>
         <ButtonGroup size="sm">
-          {(['all', 'trusted', 'suspicious', 'malicious', 'isolated'] as const).map(s => (
+          {(['all', 'trusted', 'malicious', 'active', 'removed'] as const).map(s => (
             <Button
               key={s}
               variant={statusFilter === s ? 'primary' : 'outline-secondary'}
               onClick={() => setFilter(s)}
               style={{ fontSize: '11px' }}
             >
-              {s === 'all' ? 'All' : STATUS_STYLE[s]?.label}
+              {s === 'all' ? 'All' : (STATUS_STYLE[s]?.label || s)}
             </Button>
           ))}
         </ButtonGroup>
@@ -427,10 +525,10 @@ const NodeManagementPanelPage = () => {
               <thead style={{ position: 'sticky', top: 0, backgroundColor: '#111116', zIndex: 1 }}>
                 <tr>
                   <th className="text-secondary fw-normal px-3 py-2 small">Node ID</th>
-                  <th className="text-secondary fw-normal py-2 small">Role</th>
-                  <th className="text-secondary fw-normal py-2 small" style={{ minWidth: 160 }}>Trust Score</th>
+                  <th className="text-secondary fw-normal py-2 small">Type</th>
+                  <th className="text-secondary fw-normal py-2 small">Sender / Receiver</th>
+                  <th className="text-secondary fw-normal py-2 small" style={{ minWidth: 140 }}>Trust Score</th>
                   <th className="text-secondary fw-normal py-2 small">Status</th>
-                  <th className="text-secondary fw-normal py-2 small">Last Activity</th>
                   <th className="text-secondary fw-normal py-2 small text-end pe-3">Actions</th>
                 </tr>
               </thead>
@@ -441,60 +539,49 @@ const NodeManagementPanelPage = () => {
                   <tr><td colSpan={6} className="text-center text-secondary py-5 small">No nodes match filter</td></tr>
                 ) : visible.map(node => {
                   const isLoading = node.actionState === 'loading';
-                  const nlabel = `Node ${node.address.slice(2,6).toUpperCase()}`;
                   return (
-                    <tr key={node.address}>
+                    <tr key={node.nodeId}>
                       {/* Node ID */}
                       <td className="px-3 py-2 align-middle">
-                        <div className="fw-bold text-light small">{nlabel}</div>
-                        <div className="font-monospace text-secondary" style={{ fontSize: '10px' }}>
-                          {node.address.slice(0, 12)}…{node.address.slice(-4)}
+                        <div className="fw-bold text-light small">{node.nodeId}</div>
+                        <div className="text-secondary" style={{ fontSize: '10px' }}>
+                           {new Date(node.createdAt).toLocaleDateString()}
                         </div>
                       </td>
 
-                      {/* Role */}
+                      {/* Type */}
                       <td className="py-2 align-middle small text-light">
-                        <div className="d-flex align-items-center">{getRoleIcon(node.role)}{getRoleLabel(node.role)}</div>
+                        <div className="d-flex align-items-center">{getRoleIcon(node.type)}{node.type}</div>
+                      </td>
+
+                      {/* Addresses */}
+                      <td className="py-2 align-middle small text-secondary font-monospace" style={{fontSize: '10px'}}>
+                         <div>S: {node.senderAddress.slice(0, 10)}…</div>
+                         <div>R: {node.receiverAddress.slice(0, 10)}…</div>
                       </td>
 
                       {/* Trust Score */}
-                      <td className="py-2 align-middle" style={{ minWidth: 160 }}>
+                      <td className="py-2 align-middle" style={{ minWidth: 140 }}>
                         <ScoreBar score={node.trustScore} />
                       </td>
 
                       {/* Status */}
                       <td className="py-2 align-middle">
-                        <StatusBadge status={node.status} />
-                      </td>
-
-                      {/* Last Activity */}
-                      <td className="py-2 align-middle text-secondary small">
-                        {new Date(node.lastActivity).toLocaleTimeString()}
+                        <StatusBadge status={node.status} score={node.trustScore} />
                       </td>
 
                       {/* Actions */}
                       <td className="py-2 align-middle text-end pe-3">
                         <ButtonGroup size="sm">
-                          {/* Isolate / Restore toggle */}
-                          {node.status !== 'isolated' ? (
+                          {node.status !== 'Removed' && (
                             <Button
                               variant="outline-danger"
                               disabled={isLoading}
-                              onClick={() => handleIsolate(node)}
-                              title="Isolate Node"
+                              onClick={() => handleRemove(node)}
+                              title="Remove Node"
                               style={{ fontSize: '10px' }}
                             >
-                              {isLoading ? <Spinner animation="border" size="sm" style={{ width: 10, height: 10 }} /> : <><Lock size={11} className="me-1" />Isolate</>}
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="outline-success"
-                              disabled={isLoading}
-                              onClick={() => handleRestore(node)}
-                              title="Restore Node"
-                              style={{ fontSize: '10px' }}
-                            >
-                              {isLoading ? <Spinner animation="border" size="sm" style={{ width: 10, height: 10 }} /> : <><Unlock size={11} className="me-1" />Restore</>}
+                              {isLoading ? <Spinner animation="border" size="sm" style={{ width: 10, height: 10 }} /> : <><ShieldX size={11} className="me-1" />Remove</>}
                             </Button>
                           )}
 
@@ -530,11 +617,16 @@ const NodeManagementPanelPage = () => {
         </Card.Body>
 
         <Card.Footer className="bg-transparent border-top border-secondary p-2 text-secondary" style={{ fontSize: '11px' }}>
-          Showing {visible.length} of {nodes.length} nodes &nbsp;·&nbsp; Actions are recorded immutably on the blockchain ledger
+          Dynamically manage 6G network nodes &nbsp;·&nbsp; Operations are recorded on the blockchain ledger
         </Card.Footer>
       </Card>
 
       {/* Modals */}
+      <AddNodeModal
+        show={addModal}
+        onHide={() => setAddModal(false)}
+        onSave={handleAddNode}
+      />
       <UpdateTrustModal
         node={selectedNode}
         show={updateModal}

@@ -33,6 +33,16 @@ router.put('/:nodeId', async (req, res) => {
   }
 });
 
+// Remove node from network
+router.delete('/:nodeId', async (req, res) => {
+  try {
+    const node = await nodeService.removeNode(req.params.nodeId);
+    res.json({ message: "Node removed successfully", node });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
 // View node activity / history
 router.get('/:nodeId/activity', async (req, res) => {
   try {

@@ -22,7 +22,9 @@ const AttackAlerts = ({ alerts }: { alerts: SecurityAlert[] }) => {
         ) : (
           alerts.map((alert, idx) => (
             <div key={idx} className={`p-3 rounded border d-flex flex-column gap-1 ${
-                alert.severity === 'high' ? 'bg-danger bg-opacity-10 border-danger border-opacity-25' : 'bg-warning bg-opacity-10 border-warning border-opacity-25'
+                alert.severity === 'critical' ? 'bg-danger bg-opacity-20 border-danger border-status-glow shadow-sm' :
+                alert.severity === 'high' ? 'bg-danger bg-opacity-10 border-danger border-opacity-25' : 
+                'bg-warning bg-opacity-10 border-warning border-opacity-25'
             }`}>
               <div className="d-flex justify-content-between align-items-start">
                 <span className={`small fw-bold text-uppercase ${alert.severity === 'high' ? 'text-danger' : 'text-warning'}`}>

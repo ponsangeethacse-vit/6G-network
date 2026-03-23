@@ -95,7 +95,57 @@ function mineBlock(nodeAddr, score, action) {
   io.emit('new_transaction', tx);
 }
 
-const activeAttacks = {}; // { [nodeAddress]: 'DDoS' | 'Sybil' | 'DataManipulation' }
+// ─── Dynamic Node Management ────────────────────────────────────────────────
+app.post('/api/nodes', async (req, res) => {
+  try {
+    const { nodeId, type, senderAddress, receiverAddress, trustScore } = req.body;
+    
+    // 1. Create in NodeService (DB/Memory + Blockchain)
+    const node = await require('./services/nodeService').createNode({
+      nodeId, type, senderAddress, receiverAddress, 
+      trustScore: trustScore / 100,
+      status: 'Active'
+    });
+
+    // 2. Update Simulator Local State
+    let role = 1;
+    if (type === 'Base Station') role = 2;
+    else if (type === 'Edge Node') role = 3;
+
+    MOCK_NODES.push({ address: nodeId, role, profile: 'Normal' });
+    trustScores[nodeId] = trustScore;
+    activeAttacks[nodeId] = 'Normal';
+
+    // 3. Record on Chain
+    mineBlock(nodeId, trustScore, 'Node Initialized');
+
+    res.status(201).json({ success: true, node });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/nodes/:addr', async (req, res) => {
+  try {
+    const { addr } = req.params;
+    
+    // 1. Update in NodeService
+    await require('./services/nodeService').removeNode(addr);
+
+    // 2. Update Simulator Local State
+    activeAttacks[addr] = 'Removed';
+    trustScores[addr] = 0;
+
+    // 3. Record on Chain
+    mineBlock(addr, 0, 'Node Removed from Network');
+
+    res.json({ success: true, message: `Node ${addr} removed.` });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+const activeAttacks = {}; 
 const nodeMetricsHistory = {}; // { [nodeAddress]: list of metrics }
 const activePackets = []; // Added
 const nodeLedgers = {}; // Added for local logging
@@ -115,9 +165,12 @@ function scheduleNextPacket() {
 
 function generateAutoPacket() {
   // Pick distinct random src/dst
-  const idx1 = Math.floor(Math.random() * MOCK_NODES.length);
+  let idx1 = Math.floor(Math.random() * MOCK_NODES.length);
+  while (activeAttacks[MOCK_NODES[idx1].address] === 'Removed') idx1 = Math.floor(Math.random() * MOCK_NODES.length);
+  
   let idx2 = Math.floor(Math.random() * MOCK_NODES.length);
-  while (idx2 === idx1) idx2 = Math.floor(Math.random() * MOCK_NODES.length);
+  while (idx2 === idx1 || activeAttacks[MOCK_NODES[idx2].address] === 'Removed') idx2 = Math.floor(Math.random() * MOCK_NODES.length);
+  
   const src = MOCK_NODES[idx1].address;
   const dst = MOCK_NODES[idx2].address;
 
@@ -183,6 +236,8 @@ function stopAutoPackets() {
 // ─── Simulator ────────────────────────────────────────────────────────────────
 async function runSimulatorTick() {
   for (const node of MOCK_NODES) {
+    if (activeAttacks[node.address] === 'Removed') continue; // Skip removed nodes
+    
     let activeAttack = activeAttacks[node.address] || 'Normal';
     
     // 🔮 Apply behavior profile activation chances
@@ -217,6 +272,10 @@ async function runSimulatorTick() {
           packetRate = 4 + Math.floor(Math.random() * 3);
         } else if (activeAttack === 'PacketFlooding') {
           packetRate = 800 + Math.floor(Math.random() * 100);
+        } else if (activeAttack === 'Poisoning') {
+          packetRate = 150 + Math.floor(Math.random() * 50); // Falsified high rate
+          responseTimeMs = 300 + Math.floor(Math.random() * 200); // Falsified latency
+          channelQuality = 0.45; // Degraded quality
         }
 
         // 🛡️ Added: Signal metrics for physical layer auth
@@ -237,8 +296,10 @@ async function runSimulatorTick() {
         let update_variance = Number((Math.random() * 0.04).toFixed(3));
         let parameter_drift = Number((Math.random() * 0.02).toFixed(3));
 
-        if (activeAttack === 'PoisonedGradients') {
+        if (activeAttack === 'PoisonedGradients' || activeAttack === 'Poisoning') {
           gradient_magnitude = 0.85 + Math.random() * 0.1;
+          update_variance = 0.5 + Math.random() * 0.5; // High variance
+          parameter_drift = 0.4 + Math.random() * 0.6; // High drift
         } else if (activeAttack === 'CoordinatedAttack') {
           gradient_magnitude = 0.90 + Math.random() * 0.08;
         }
@@ -261,6 +322,16 @@ async function runSimulatorTick() {
       update_variance,
       parameter_drift
     };
+
+    if (activeAttack === 'Poisoning' && Math.random() < 0.4) {
+      // Misleading reputation: Bad-mouth a random legitimate node
+      const victim = MOCK_NODES[Math.floor(Math.random() * MOCK_NODES.length)].address;
+      if (victim !== node.address && trustScores[victim] > 40) {
+        trustScores[victim] -= 5;
+        console.log(`[Poisoning] Node ${node.address.slice(0,6)} is bad-mouthing ${victim.slice(0,6)}. New victim trust: ${trustScores[victim]}`);
+        io.emit('trust_update', { node: victim, trustScore: trustScores[victim], classification: 'Targeted by Poisoning' });
+      }
+    }
 
     // Maintain history for LSTM sequential tests
     if (!nodeMetricsHistory[node.address]) nodeMetricsHistory[node.address] = [];
@@ -328,6 +399,24 @@ async function runSimulatorTick() {
         }
     }
 
+    // 🔬 Step 2: Poisoning Detection (Statistical Outlier / Gradient Analysis)
+    const poisonedUpdate = federatedAggregation.isPoisonedUpdate([currentMetrics.model_update_magnitude], [0.15]); // Simplified check
+    // Actually, more comprehensive check:
+    const isGradientsExtreme = currentMetrics.gradient_magnitude > 0.8 || currentMetrics.update_variance > 0.4;
+    
+    if (isGradientsExtreme && activeAttack === 'Poisoning') {
+        isAnomalous = true;
+        classification = 'Poisoning Attack';
+        finalScore = Math.max(0, finalScore - 50); // Severe penalty
+        console.log(`[Detector] 🚨 Poisoning detected for ${node.address.slice(0,6)} (Gradient magnitude outlier)`);
+        
+        pipelineStages.push({
+           stage: "Model Poisoning Detection",
+           success: false,
+           details: `Anomalous gradients detected: ${currentMetrics.gradient_magnitude}`
+        });
+    }
+
     trustScores[node.address] = finalScore;
 
     // Emit trust_update with PIPELINE trace metadata
@@ -361,13 +450,20 @@ async function runSimulatorTick() {
 
     // 🤝 Submit for Federated Aggregation if trust >= threshold
     if (finalScore >= 60) {
-      const gradients = [
+      let gradients = [
         Number((Math.random() * 0.4 + 0.1).toFixed(3)),
         Number((Math.random() * 0.3 + 0.1).toFixed(3)),
         Number((Math.random() * 0.2).toFixed(3)),
         Number((Math.random() * 0.5 + 0.5).toFixed(3)),
         Number((Math.random() * 0.1).toFixed(3))
       ];
+
+      if (activeAttack === 'Poisoning') {
+        // Inject extreme poisoned gradients to skew the global model
+        gradients = [10.0, -10.0, 5.0, 8.0, -5.0];
+        console.log(`[Poisoning] Malicious node ${node.address.slice(0,6)} injected poisoned gradients.`);
+      }
+
       federatedAggregation.submitUpdate(node.address, gradients, finalScore);
     }
 

@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const nodeSchema = new mongoose.Schema({
   nodeId: { type: String, required: true, unique: true },
-  type: { type: String, enum: ['IoT', 'Edge', 'Core'], default: 'IoT' },
+  type: { type: String, enum: ['IoT Device', 'User Device', 'Edge Node', 'Base Station'], default: 'IoT Device' },
   senderAddress: { type: String, default: "" },
   receiverAddress: { type: String, default: "" },
   trustScore: { type: Number, default: 0.5 },
@@ -14,7 +14,7 @@ const nodeSchema = new mongoose.Schema({
     transTrust: { type: Number, default: 0.5 },
     behaviorTrust: { type: Number, default: 0.5 }
   },
-  status: { type: String, enum: ['Normal', 'Suspicious', 'Malicious'], default: 'Normal' },
+  status: { type: String, enum: ['Normal', 'Suspicious', 'Malicious', 'Active', 'Removed'], default: 'Normal' },
   transactionHistory: [{
     txHash: String,
     action: String,

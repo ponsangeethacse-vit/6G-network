@@ -9,34 +9,71 @@ class NodeService {
         let node;
         const isConnected = mongoose.connection.readyState === 1;
 
+        const newNodeData = {
+            ...nodeData,
+            status: nodeData.status || 'Active',
+            trustScore: nodeData.trustScore !== undefined ? nodeData.trustScore : 0.8,
+            transactionHistory: []
+        };
+
         if (isConnected) {
-            node = new Node(nodeData);
+            node = new Node(newNodeData);
             await node.save();
         } else {
             console.warn('[NodeService] MongoDB disconnected, using in-memory fallback');
             node = {
-                ...nodeData,
-                transactionHistory: [],
-                status: nodeData.status || 'Normal',
-                trustScore: nodeData.trustScore !== undefined ? nodeData.trustScore : 0.5,
+                ...newNodeData,
                 createdAt: new Date(),
-                save: async function() { return this; } // mock save
+                save: async function() { return this; }
             };
             inMemoryNodes.push(node);
         }
 
         // 2. Sync with Blockchain
         try {
+            // Using NodeID as the address for registration in this simulation
             const result = await blockchainConnector.registerNode(nodeData.nodeId, 1);
             if (result.success) {
                 node.transactionHistory.push({
                     txHash: result.txHash,
-                    action: 'Node Registered on Blockchain'
+                    action: 'Node Initialized and Registered on Blockchain',
+                    timestamp: new Date()
                 });
                 if (isConnected) await node.save();
             }
         } catch (err) {
             console.warn(`[NodeService] blockchain sync failed for ${nodeData.nodeId}:`, err.message);
+        }
+
+        return node;
+    }
+
+    async removeNode(nodeId) {
+        const isConnected = mongoose.connection.readyState === 1;
+        let node;
+
+        if (isConnected) {
+            node = await Node.findOneAndUpdate({ nodeId }, { status: 'Removed' }, { new: true });
+        } else {
+            node = inMemoryNodes.find(n => n.nodeId === nodeId);
+            if (node) node.status = 'Removed';
+        }
+
+        if (!node) throw new Error('Node not found');
+
+        // Log to Blockchain
+        try {
+            const result = await blockchainConnector.updateTrustScore(nodeId, 0, 'Node Deactivated/Removed');
+            if (result.success) {
+                node.transactionHistory.push({
+                    txHash: result.txHash,
+                    action: 'Node Removed from Network (Status updated on Chain)',
+                    timestamp: new Date()
+                });
+                if (isConnected) await node.save();
+            }
+        } catch (err) {
+            console.warn(`[NodeService] blockchain removal log failed for ${nodeId}:`, err.message);
         }
 
         return node;
@@ -65,7 +102,8 @@ class NodeService {
                  if (result.success) {
                       node.transactionHistory.push({
                            txHash: result.txHash,
-                           action: `Trust Score Updated to ${updateData.trustScore}`
+                           action: `Trust Score Updated to ${updateData.trustScore}`,
+                           timestamp: new Date()
                       });
                       if (isConnected) await node.save();
                  }
