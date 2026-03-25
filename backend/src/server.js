@@ -3,6 +3,8 @@ const express = require('express');
 const http = require('http');
 const cors = require('cors');
 const { Server } = require('socket.io');
+const Node = require('./models/Node');
+const nodeService = require('./services/nodeService');
 
 // ─── App & Server ──────────────────────────────────────────────────────────────
 const app = express();
@@ -14,7 +16,7 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
-// ─── 6G Node Management & Transfer Routes ───────────────────────────────────
+// ─── Advanced 5G Node Management & Transfer Routes ───────────────────────────────────
 const nodesRouter = require('./routes/nodes');
 const transfersRouter = require('./routes/transfers');
 const physicalAuth = require('./services/physicalAuthService');
@@ -24,29 +26,18 @@ const localBlockchainService = require('./services/localBlockchainService'); // 
 
 app.use('/api/admin/nodes', nodesRouter);
 app.use('/api/admin/transfers', transfersRouter);
+const simulationState = require('./services/simulationState');
 
-// ─── Mock 6G Node Registry ────────────────────────────────────────────────────
-const MOCK_NODES = Array.from({ length: 20 }, (_, i) => {
-  const hex = (i + 1).toString(16).padStart(40, '0');
-  let role = 1; // Default IoT
-  if (i >= 14 && i < 17) role = 2; // Base Station proxy
-  else if (i >= 17 && i < 19) role = 3; // Relay proxy
+// ─── Simulation State ────────────────────────────────────────────────────────
+const MOCK_NODES = simulationState.getNodes();
+const trustScores = simulationState.getTrustScores();
+const activeAttacks = simulationState.getActiveAttacks();
 
-  let profile = 'Normal';
-  if (i < 2) profile = 'Malicious';       // First 2 nodes (10%)
-  else if (i < 6) profile = 'Suspicious';  // Next 4 nodes (20%)
-
-  return { address: `0x${hex}`, role, profile };
-});
-
-// ─── In-Memory Trust & Blockchain State ───────────────────────────────────────
-const trustScores = {};      // address -> current score (0-100)
+// Initial trust scores populated by simulationState.syncNodesFromDB()
 const alerts = [];           // attack alerts list
 const blockchainBlocks = []; // simulated blockchain blocks
 let maliciousMode = false;
 let blockIndex = 1;
-
-MOCK_NODES.forEach(n => { trustScores[n.address] = 85; });
 
 // Transaction log — separate from blocks, for the TX viewer table
 const txLog = [];   // rich transaction records
@@ -98,23 +89,24 @@ function mineBlock(nodeAddr, score, action) {
 // ─── Dynamic Node Management ────────────────────────────────────────────────
 app.post('/api/nodes', async (req, res) => {
   try {
-    const { nodeId, type, senderAddress, receiverAddress, trustScore } = req.body;
+    const { 
+      nodeId, type, senderAddress, receiverAddress, trustScore,
+      rfFingerprint, csiBehavior, snr
+    } = req.body;
     
-    // 1. Create in NodeService (DB/Memory + Blockchain)
+    // 1. Initialize Physical Layer Profile (Correcting sequence: Initialize -> Complete -> Create)
+    physicalAuth.initializeNodeProfile(nodeId, { rfFingerprint, csiBehavior, snr });
+
+    // 2. Create in NodeService (DB/Memory + Blockchain registration)
     const node = await require('./services/nodeService').createNode({
       nodeId, type, senderAddress, receiverAddress, 
       trustScore: trustScore / 100,
-      status: 'Active'
+      rfFingerprint, csiBehavior, snr,
+      status: 'Healthy'
     });
 
-    // 2. Update Simulator Local State
-    let role = 1;
-    if (type === 'Base Station') role = 2;
-    else if (type === 'Edge Node') role = 3;
-
-    MOCK_NODES.push({ address: nodeId, role, profile: 'Normal' });
-    trustScores[nodeId] = trustScore;
-    activeAttacks[nodeId] = 'Normal';
+    // 2. Refresh local state
+    await simulationState.syncNodesFromDB();
 
     // 3. Record on Chain
     mineBlock(nodeId, trustScore, 'Node Initialized');
@@ -145,7 +137,6 @@ app.delete('/api/nodes/:addr', async (req, res) => {
   }
 });
 
-const activeAttacks = {}; 
 const nodeMetricsHistory = {}; // { [nodeAddress]: list of metrics }
 const activePackets = []; // Added
 const nodeLedgers = {}; // Added for local logging
@@ -238,17 +229,17 @@ async function runSimulatorTick() {
   for (const node of MOCK_NODES) {
     if (activeAttacks[node.address] === 'Removed') continue; // Skip removed nodes
     
-    let activeAttack = activeAttacks[node.address] || 'Normal';
+    let activeAttack = activeAttacks[node.address] || 'Healthy';
     
     // 🔮 Apply behavior profile activation chances
     if (node.profile === 'Suspicious' && Math.random() < 0.35) {
       activeAttack = 'Suspicious';
     } else if (node.profile === 'Malicious' && Math.random() < 0.25) {
-      const heavy = ['DDoS', 'Sybil', 'DataManipulation', 'PacketFlooding'];
+      const heavy = ['DDoS attack', 'sybil attack', 'poison attack', 'data manipulation'];
       activeAttack = heavy[Math.floor(Math.random() * heavy.length)];
     }
 
-    const attacking = activeAttack !== 'Normal';
+    const attacking = activeAttack !== 'Healthy';
 
     // 📈 Base rates with stochastic noise
     let packetRate = 12 + Math.floor(Math.random() * 21) - 10;     // rand(-10, 10)
@@ -258,21 +249,21 @@ async function runSimulatorTick() {
     let channelQuality = 0.95; // nominal
 
         // Apply attack profile modifiers
-        if (activeAttack === 'DDoS') {
+        if (activeAttack === 'DDoS attack') {
           packetRate = 500 + Math.floor(Math.random() * 50);
           responseTimeMs = 1500 + Math.floor(Math.random() * 100);
           packetSize = 5000;
-        } else if (activeAttack === 'Sybil') {
+        } else if (activeAttack === 'sybil attack') {
           packetRate = 80 + Math.floor(Math.random() * 10);
           authFailures = 5;
         } else if (activeAttack === 'Suspicious') {
           packetRate = 45 + Math.floor(Math.random() * 15);
           channelQuality = 0.75; 
-        } else if (activeAttack === 'DataManipulation') {
+        } else if (activeAttack === 'data manipulation') {
           packetRate = 4 + Math.floor(Math.random() * 3);
-        } else if (activeAttack === 'PacketFlooding') {
+        } else if (activeAttack === 'Packet Flooding' || activeAttack === 'DDoS attack') {
           packetRate = 800 + Math.floor(Math.random() * 100);
-        } else if (activeAttack === 'Poisoning') {
+        } else if (activeAttack === 'poison attack') {
           packetRate = 150 + Math.floor(Math.random() * 50); // Falsified high rate
           responseTimeMs = 300 + Math.floor(Math.random() * 200); // Falsified latency
           channelQuality = 0.45; // Degraded quality
@@ -284,7 +275,7 @@ async function runSimulatorTick() {
         let providedCsi = 0.85;
         let providedSnr = 25.0;
 
-        if (activeAttack === 'Sybil') {
+        if (activeAttack === 'sybil attack') {
           providedRf = `RF_SPOOF_${Math.floor(Math.random() * 1000)}`;
         } else if (activeAttack === 'Suspicious') {
           providedCsi = 0.60;
@@ -296,7 +287,7 @@ async function runSimulatorTick() {
         let update_variance = Number((Math.random() * 0.04).toFixed(3));
         let parameter_drift = Number((Math.random() * 0.02).toFixed(3));
 
-        if (activeAttack === 'PoisonedGradients' || activeAttack === 'Poisoning') {
+        if (activeAttack === 'PoisonedGradients' || activeAttack === 'poison attack') {
           gradient_magnitude = 0.85 + Math.random() * 0.1;
           update_variance = 0.5 + Math.random() * 0.5; // High variance
           parameter_drift = 0.4 + Math.random() * 0.6; // High drift
@@ -309,8 +300,8 @@ async function runSimulatorTick() {
       latency: responseTimeMs,
       bandwidth_usage: packetSize * packetRate,
       failed_requests: attacking ? 12 : 1,
-      connection_attempts: (activeAttack === 'Sybil') ? 22 : 4,
-      authentication_attempts: (activeAttack === 'Sybil') ? 22 : 4,
+      connection_attempts: (activeAttack === 'sybil attack') ? 22 : 4,
+      authentication_attempts: (activeAttack === 'sybil attack') ? 22 : 4,
       authentication_failures: authFailures,
       channel_quality: channelQuality,
       rfFingerprint: providedRf,
@@ -323,7 +314,7 @@ async function runSimulatorTick() {
       parameter_drift
     };
 
-    if (activeAttack === 'Poisoning' && Math.random() < 0.4) {
+    if (activeAttack === 'poison attack' && Math.random() < 0.4) {
       // Misleading reputation: Bad-mouth a random legitimate node
       const victim = MOCK_NODES[Math.floor(Math.random() * MOCK_NODES.length)].address;
       if (victim !== node.address && trustScores[victim] > 40) {
@@ -343,7 +334,7 @@ async function runSimulatorTick() {
     let finalScore = previousScore;
     let pipelineStages = [];
     let isAnomalous = false;
-    let classification = 'Normal';
+    let classification = 'Healthy Traffic';
 
     // 🔬 Step 1: Pre-Filter Physical Layer Authentication in Backend
     const authStatus = physicalAuth.verifyIdentity(node.address, currentMetrics);
@@ -351,7 +342,7 @@ async function runSimulatorTick() {
     if (!authStatus.authenticated) {
         // Reject and Isolate Immediately
         isAnomalous = true;
-        classification = 'Spoofed Identity';
+        classification = 'sybil attack';
         const evidence = 0; // Absolute fail
         finalScore = Math.round((0.8 * previousScore) + (0.2 * evidence));
         pipelineStages = [
@@ -391,7 +382,8 @@ async function runSimulatorTick() {
     // Apply attack profile modifiers
           finalScore = Math.round((0.8 * previousScore) + (0.2 * evidence));
           isAnomalous = attacking;
-          classification = attacking ? 'Fallback Attack' : 'Normal';
+          // If attacking is true but activeAttack is undefined/Normal, default to 'data manipulation'
+          classification = attacking ? ((activeAttack === 'Healthy') ? 'data manipulation' : activeAttack) : 'Healthy Traffic';
           pipelineStages = [
              { stage: "Physical Auth Pre-Filter (Backend)", success: true, details: "Passed credentials match" },
              { stage: "Fallback Aggregator", score: finalScore, details: "AI Online verification skipping..." }
@@ -404,9 +396,9 @@ async function runSimulatorTick() {
     // Actually, more comprehensive check:
     const isGradientsExtreme = currentMetrics.gradient_magnitude > 0.8 || currentMetrics.update_variance > 0.4;
     
-    if (isGradientsExtreme && activeAttack === 'Poisoning') {
+    if (isGradientsExtreme && activeAttack === 'poison attack') {
         isAnomalous = true;
-        classification = 'Poisoning Attack';
+        classification = 'poison attack';
         finalScore = Math.max(0, finalScore - 50); // Severe penalty
         console.log(`[Detector] 🚨 Poisoning detected for ${node.address.slice(0,6)} (Gradient magnitude outlier)`);
         
@@ -458,7 +450,7 @@ async function runSimulatorTick() {
         Number((Math.random() * 0.1).toFixed(3))
       ];
 
-      if (activeAttack === 'Poisoning') {
+      if (activeAttack === 'poison attack') {
         // Inject extreme poisoned gradients to skew the global model
         gradients = [10.0, -10.0, 5.0, 8.0, -5.0];
         console.log(`[Poisoning] Malicious node ${node.address.slice(0,6)} injected poisoned gradients.`);
@@ -470,14 +462,25 @@ async function runSimulatorTick() {
     // Generate attack alert structure for monitoring page buffer feed
     if (isAnomalous || finalScore < 60) {
       const severity = finalScore < 30 ? 'critical' : finalScore < 50 ? 'high' : 'medium';
-      const nodeLabel = `Node ${node.address.slice(2, 6).toUpperCase()}`;
+      
+      // Ensure the alert type is one of the 4 requested (if not already set to one by AI or fallback)
+      let alertType = classification;
+      const validTypes = ['ddos attack', 'sybil attack', 'poison attack', 'data manipulation'];
+      if (!validTypes.includes(alertType)) {
+        // Map common synonyms or defaults
+        if (alertType.toLowerCase().includes('ddos')) alertType = 'ddos attack';
+        else if (alertType.toLowerCase().includes('sybil')) alertType = 'sybil attack';
+        else if (alertType.toLowerCase().includes('poison')) alertType = 'poison attack';
+        else if (alertType.toLowerCase().includes('manipulation') || alertType.toLowerCase().includes('traffic')) alertType = 'data manipulation';
+        else alertType = 'data manipulation'; // Ultimate fallback
+      }
 
       const alert = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
         nodeId: node.address,
-        nodeLabel,
-        type: classification.includes('Attack') ? classification : `${classification} Attack`,
-        message: `⚠️ ${classification} detected on ${nodeLabel}`,
+        nodeLabel: `Node ${node.address.slice(2, 6).toUpperCase()}`,
+        type: alertType,
+        message: `⚠️ ${alertType} detected`,
         detail: pipelineStages.map(p => `${p.stage}: ${p.details || 'Processed'}`).join(' | '),
         severity,
         trustScore: finalScore,
@@ -519,10 +522,10 @@ function processPacketsSim() {
     const next_hop_node = pkt.path[pkt.currentIdx + 1];
 
     // Check if next hop is malicious OR below trust threshold
-    const attack = activeAttacks[next_hop_node] || 'Normal';
+    const attack = activeAttacks[next_hop_node] || 'Healthy';
     const trust = trustScores[next_hop_node] !== undefined ? trustScores[next_hop_node] : 80;
 
-    if (attack !== 'Normal' || trust < 50) {
+    if (attack !== 'Healthy' || trust < 50) {
       console.log(`[Routing] 🚨 Next hop ${next_hop_node.slice(2, 6).toUpperCase()} triggers safety cutoff (Attack: ${attack}, Trust: ${trust}). Recomputing from ${current_node.slice(2, 6).toUpperCase()}...`);
       
       // ⛓️ Log Blocked on Current Node local blockchain
@@ -679,7 +682,7 @@ app.post('/api/simulator/start', (req, res) => {
 app.post('/api/simulator/stop', (req, res) => {
   stopAutoPackets();
   io.emit('simulation_status', { running: false });
-  console.log('[Simulator] ⏹️  Simulation STOPPED');
+  console.log('[Simulator] 🟢 Advanced 5G Traffic Simulation Started');
   res.json({ success: true, running: false });
 });
 
@@ -799,7 +802,7 @@ app.post('/api/simulator/attack', (req, res) => {
   const { node, attackType } = req.body;
   if (node) {
     // 🔬 Containment Rule 6: Max 15% Malicious Simulator Limit
-    const maliciousCount = Object.values(activeAttacks).filter(a => a !== 'Normal' && a !== 'Normal Traffic').length;
+    const maliciousCount = Object.values(activeAttacks).filter(a => a !== 'Healthy' && a !== 'Normal' && a !== 'Healthy Traffic' && a !== 'Normal Traffic').length;
     const maxAllowed = Math.ceil(MOCK_NODES.length * 0.15);
 
     if (attackType !== 'Normal' && maliciousCount >= maxAllowed && !activeAttacks[node]) {
@@ -842,14 +845,16 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {
   console.log(`\n✅ Backend running on http://localhost:${PORT}`);
-  console.log('✅ 6G Simulator starting...\n');
+  console.log('✅ Advanced 5G Simulator starting...\n');
   
-  // Start simulator immediately
-  setInterval(runSimulatorTick, 2000);
+  // Start simulator after syncing nodes
+  simulationState.syncNodesFromDB().then(() => {
+    setInterval(runSimulatorTick, 2000);
+  });
 
   // 🎲 Stochastic Attack Generator (Every 5-10 seconds)
   setInterval(() => {
-    const maliciousCount = Object.values(activeAttacks).filter(a => a !== 'Normal' && a !== 'Normal Traffic').length;
+    const maliciousCount = Object.values(activeAttacks).filter(a => a !== 'Healthy' && a !== 'Normal' && a !== 'Healthy Traffic' && a !== 'Normal Traffic').length;
     const maxAllowed = Math.ceil(MOCK_NODES.length * 0.15); // Max 15% (e.g., 1 node)
 
     const node = MOCK_NODES[Math.floor(Math.random() * MOCK_NODES.length)].address;
@@ -857,16 +862,16 @@ server.listen(PORT, () => {
 
     if (maliciousCount >= maxAllowed) {
        // Stop generating NEW attacks. If picked node is malicious, allow healing to Normal
-       if (activeAttacks[node] && activeAttacks[node] !== 'Normal' && rand < 0.50) {
+       if (activeAttacks[node] && activeAttacks[node] !== 'Healthy' && activeAttacks[node] !== 'Normal' && rand < 0.50) {
           delete activeAttacks[node];
-          console.log(`[Stochastic] 🛡️ Node ${node.slice(0,6)} forced back to Normal for recovery balancer.`);
-          io.emit('simulator_mode', { node, attackType: 'Normal', isMaliciousMode: false });
+          console.log(`[Stochastic] 🛡️ Node ${node.slice(0,6)} forced back to Healthy for recovery balancer.`);
+          io.emit('simulator_mode', { node, attackType: 'Healthy', isMaliciousMode: false });
        }
        return;
     }
 
     if (rand < 0.10) { // 10% Malicious
-      const attacks = ['DDoS', 'Sybil', 'DataManipulation', 'PacketFlooding'];
+      const attacks = ['DDoS attack', 'sybil attack', 'poison attack', 'data manipulation'];
       const chosen = attacks[Math.floor(Math.random() * attacks.length)];
       activeAttacks[node] = chosen;
       console.log(`[Stochastic] 🎲 Spontaneous Attack [${chosen}] initiated on ${node.slice(0,6)}`);
@@ -878,8 +883,8 @@ server.listen(PORT, () => {
     } else { // 70% Normal
       if (activeAttacks[node]) {
         delete activeAttacks[node];
-        console.log(`[Stochastic] 🛡️ Node ${node.slice(0,6)} returned to Normal`);
-        io.emit('simulator_mode', { node, attackType: 'Normal', isMaliciousMode: false });
+        console.log(`[Stochastic] 🛡️ Node ${node.slice(0,6)} returned to Healthy`);
+        io.emit('simulator_mode', { node, attackType: 'Healthy', isMaliciousMode: false });
       }
     }
   }, Math.floor(Math.random() * 5000) + 5000);
@@ -888,7 +893,7 @@ server.listen(PORT, () => {
 // ─── Optional: Try MongoDB (non-blocking) ─────────────────────────────────────
 try {
   const mongoose = require('mongoose');
-  const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/6g_trustguard';
+  const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/advanced_5g_trustguard';
   mongoose.connect(MONGODB_URI)
     .then(() => console.log('[MongoDB] Connected'))
     .catch(err => console.warn('[MongoDB] Not available, running in mock mode:', err.message));

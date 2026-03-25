@@ -45,9 +45,8 @@ interface SelectedPanel {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const classify = (score: number): NetworkNode['status'] => {
-  if (score > 80) return 'healthy';
-  if (score >= 60) return 'suspicious';
-  if (score >= 40) return 'under_investigation';
+  if (score >= 70) return 'healthy'; // Label is 'Trusted' or 'Healthy'
+  if (score >= 40) return 'suspicious';
   return 'malicious';
 };
 
@@ -93,7 +92,7 @@ const StatusBadge = ({ status }: { status?: NetworkNode['status'] }) => {
   const config = {
     healthy: { 
       color: '#198754', bg: 'rgba(25, 135, 84, 0.1)', 
-      icon: <ShieldCheck size={11} className="me-1" />, label: 'Healthy' 
+      icon: <ShieldCheck size={11} className="me-1" />, label: 'Trusted' 
     },
     suspicious: { 
       color: '#ffc107', bg: 'rgba(255, 193, 7, 0.1)', 
@@ -363,7 +362,7 @@ const NetworkDashboardPage = () => {
 
     const appendEvent = (type: string, data: any) => {
       setPacketEvents(prev => [{
-        id: Date.now() + Math.random(),
+        id: `${type}-${data.packetId || 't'}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
         eventType: type,
         packetId: data.packetId,
         src: data.src,
@@ -649,7 +648,7 @@ const NetworkDashboardPage = () => {
         <div>
           <h4 className="text-light fw-bold mb-1">Network Topology</h4>
           <p className="text-secondary small mb-0">
-            Live 6G mesh visualization — click nodes to inspect details
+            Live Advanced 5G mesh visualization — click nodes to inspect details
           </p>
         </div>
         <div className="d-flex align-items-center gap-2">
@@ -763,7 +762,7 @@ const NetworkDashboardPage = () => {
               {loading ? (
                 <div className="h-100 d-flex align-items-center justify-content-center text-secondary">
                   <Spinner animation="border" variant="primary" className="me-2" />
-                  Initializing 6G Network Mesh…
+                  Initializing Advanced 5G Network Mesh…
                 </div>
               ) : nodes.length === 0 ? (
                 <div className="h-100 d-flex flex-column align-items-center justify-content-center text-secondary opacity-50">
@@ -1080,11 +1079,11 @@ const NetworkDashboardPage = () => {
                   </div>
                 </div>
 
-                {/* 🛡️ Secure 6G Processing Pipeline Panels */}
+                {/* 🛡️ Secure Advanced 5G Processing Pipeline Panels */}
                 {selected.node.pipelineStages && selected.node.pipelineStages.length > 0 && (
                   <div className="pt-3 border-top border-secondary border-opacity-25">
                     <p className="text-secondary mb-3 d-flex align-items-center gap-1 small">
-                      <Activity size={13} className="text-info" /> Secure 6G Response Pipeline
+                      <Activity size={13} className="text-info" /> Secure Advanced 5G Response Pipeline
                     </p>
                     <div className="row row-cols-1 g-2" style={{ maxHeight: '320px', overflowY: 'auto' }}>
                       {selected.node.pipelineStages.map((stage: any, index: number) => {
@@ -1161,12 +1160,10 @@ const NetworkDashboardPage = () => {
                       onChange={(e) => setSimAttack(e.target.value)}
                       disabled={loadingAttack}
                     >
-                      <option value="DDoS">DDoS Attack</option>
-                      <option value="Sybil">Sybil Attack</option>
-                      <option value="DataManipulation">Data Manipulation</option>
-                      <option value="PoisonedGradients">Poisoned Gradients</option>
-                      <option value="DelayedUpdate">Delayed Update</option>
-                      <option value="CoordinatedAttack">Coordinated Attack</option>
+                      <option value="ddos attack">DDoS Attack</option>
+                      <option value="sybil attack">Sybil Attack</option>
+                      <option value="poison attack">Poison Attack</option>
+                      <option value="data manipulation">Data Manipulation</option>
                     </select>
                     <Button 
                       size="sm" 

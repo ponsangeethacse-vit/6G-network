@@ -1,5 +1,5 @@
 /**
- * 6G TrustGuard - Routing Service
+ * Advanced 5G TrustGuard - Routing Service
  * Implements Trust-Aware Dijkstra shortest-path finding matching 
  * the dashboard dynamic mesh topology.
  */
@@ -50,13 +50,13 @@ function getAdjacencyList(nodes) {
  */
 function getEdgeWeight(targetAddr, trustScores = {}, activeAttacks = {}) {
   const score = trustScores[targetAddr] ?? 85; 
-  const attack = activeAttacks[targetAddr] || 'Normal';
+  const attack = activeAttacks[targetAddr] || 'Healthy';
 
   // Base cost ensures shorter paths win incrementally if scores equal
   let cost = 101 - score; 
 
   // Malicious attack penalty
-  if (attack !== 'Normal') {
+  if (attack !== 'Healthy') {
     cost += PENALTY_MALICIOUS;
   }
   // Low trust score penalty (<60)

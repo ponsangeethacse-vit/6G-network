@@ -1,6 +1,6 @@
-# 6G TrustGuard - Full Stack Trust Management System
+# Advanced 5G TrustGuard - Full Stack Trust Management System
 
-A real-time, blockchain-powered trust management and attack detection system for 6G networks.
+A real-time, blockchain-powered trust management and attack detection system for Advanced 5G networks.
 
 ## Architecture
 - **Frontend**: React 18, Vite, Three.js (3D Visualization), Web3.js, Recharts, Tailwind CSS.
@@ -35,7 +35,7 @@ npm run dev
 - **Trust Ledger**: A simulated blockchain explorer recording every trust update.
 - **Web3 Integration**: Connect wallet to sign reports (simulated).
 
-## 6G Trust Formula
+## Advanced 5G Trust Formula
 `trustScore = 0.4 * commTrust + 0.3 * transTrust + 0.3 * behaviorTrust`
 
 ## License

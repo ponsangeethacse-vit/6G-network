@@ -1,5 +1,5 @@
 {
-  "name": "6g-trustguard",
+  "name": "advanced-5g-trustguard",
   "version": "1.0.0",
   "scripts": {
     "install:all": "cd backend && npm install && cd ../frontend && npm install",

@@ -21,9 +21,9 @@ class Blockchain {
     const genesisBlock = new Block({
       index: 0,
       timestamp: Date.now(),
-      transactions: [{ message: "6G TrustGuard Genesis Block" }],
+      transactions: [{ message: "Advanced 5G TrustGuard Genesis Block" }],
       previousHash: "0",
-      hash: this.calculateHash(0, "0", Date.now(), [{ message: "6G TrustGuard Genesis Block" }], 0),
+      hash: this.calculateHash(0, "0", Date.now(), [{ message: "Advanced 5G TrustGuard Genesis Block" }], 0),
       nonce: 0
     });
     await genesisBlock.save();

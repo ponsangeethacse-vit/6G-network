@@ -43,7 +43,7 @@ const DashboardLayout = ({
       <div className="bg-dark border-end border-secondary d-flex flex-column" style={{ width: '280px', backgroundColor: '#111116' }}>
         <div className="p-4 border-bottom border-secondary d-flex align-items-center gap-3">
           <Shield className="text-primary" size={32} />
-          <span className="fw-bold fs-5 tracking-tight text-white line-height-1">6G Trust<br/>Defender</span>
+          <span className="fw-bold fs-5 tracking-tight text-white line-height-1">Advanced 5G Trust<br/>Defender</span>
         </div>
         
         <div className="flex-grow-1 p-3 d-flex flex-column gap-2">

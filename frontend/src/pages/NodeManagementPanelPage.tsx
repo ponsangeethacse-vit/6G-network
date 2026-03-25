@@ -26,15 +26,27 @@ interface ManagedNode {
   status: string;
   createdAt: string;
   actionState: ActionState;
+  rfFingerprint?: string;
+  csiBehavior?: number;
+  snr?: number;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 type NodeStatus = 'trusted' | 'suspicious' | 'malicious' | 'isolated' | 'active' | 'removed';
 
 const classify = (score: number, status?: string): NodeStatus => {
-  if (status?.toLowerCase() === 'removed') return 'removed';
-  if (status?.toLowerCase() === 'active') return 'active';
-  return score === 0 ? 'isolated' : score >= 70 ? 'trusted' : score >= 40 ? 'suspicious' : 'malicious';
+  const s = status?.toLowerCase();
+  if (s === 'removed') return 'removed';
+  
+  // If we have a trust score, use it for security classification
+  // (Ignoring score === 0 as 'isolated' if you want to keep 'malicious' as the label)
+  if (score >= 70) return 'trusted';
+  if (score >= 40) return 'suspicious';
+  if (score > 0)  return 'malicious';
+  if (score === 0) return 'malicious'; // or 'isolated'
+
+  if (s === 'active' || s === 'healthy' || s === 'normal') return 'active';
+  return 'malicious';
 };
 
 const getRoleIcon = (type: string, size = 15) => {
@@ -194,7 +206,10 @@ const AddNodeModal = ({ show, onHide, onSave }: AddModalProps) => {
     type: 'IoT Device',
     senderAddress: '0x' + Array.from({length: 40}, () => Math.floor(Math.random() * 16).toString(16)).join(''),
     receiverAddress: '0x' + Array.from({length: 40}, () => Math.floor(Math.random() * 16).toString(16)).join(''),
-    trustScore: 80
+    trustScore: 80,
+    rfFingerprint: '',
+    csiBehavior: 0.85,
+    snr: 25.0
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -230,10 +245,10 @@ const AddNodeModal = ({ show, onHide, onSave }: AddModalProps) => {
                 value={formData.type}
                 onChange={e => setFormData({...formData, type: e.target.value})}
               >
-                <option>IoT Device</option>
-                <option>User Device</option>
-                <option>Edge Node</option>
-                <option>Base Station</option>
+                <option value="IoT Device">IoT Device</option>
+                <option value="User Device">User Device</option>
+                <option value="Edge Node">Edge Node</option>
+                <option value="Base Station">Base Station</option>
               </Form.Select>
             </Col>
             <Col md={6}>
@@ -259,6 +274,38 @@ const AddNodeModal = ({ show, onHide, onSave }: AddModalProps) => {
               <Form.Range 
                 min={0} max={100} value={formData.trustScore}
                 onChange={e => setFormData({...formData, trustScore: Number(e.target.value)})}
+              />
+            </Col>
+            
+            <Col md={12} className="mt-4 pt-2 border-top border-secondary border-opacity-10">
+               <h6 className="text-info small mb-3 uppercase" style={{fontSize: '10px', letterSpacing: '1px'}}>Physical Layer Authentication (Advanced 5G Advanced)</h6>
+            </Col>
+
+            <Col md={6}>
+              <Form.Label className="small text-secondary">RF Fingerprint (Custom)</Form.Label>
+              <Form.Control 
+                className="bg-dark border-secondary text-light font-monospace small" 
+                placeholder="Leave blank for auto-gen"
+                value={formData.rfFingerprint} 
+                onChange={e => setFormData({...formData, rfFingerprint: e.target.value})}
+              />
+            </Col>
+            <Col md={3}>
+              <Form.Label className="small text-secondary">CSI Nominal</Form.Label>
+              <Form.Control 
+                type="number" step="0.01"
+                className="bg-dark border-secondary text-light small" 
+                value={formData.csiBehavior} 
+                onChange={e => setFormData({...formData, csiBehavior: Number(e.target.value)})}
+              />
+            </Col>
+            <Col md={3}>
+              <Form.Label className="small text-secondary">SNR (dB)</Form.Label>
+              <Form.Control 
+                type="number" step="0.1"
+                className="bg-dark border-secondary text-light small" 
+                value={formData.snr} 
+                onChange={e => setFormData({...formData, snr: Number(e.target.value)})}
               />
             </Col>
           </Row>
@@ -315,6 +362,9 @@ const NodeManagementPanelPage = () => {
           status: n.status || 'Active',
           createdAt: n.createdAt || new Date().toISOString(),
           actionState: 'idle' as ActionState,
+          rfFingerprint: n.rfFingerprint,
+          csiBehavior: n.csiBehavior,
+          snr: n.snr
         };
       });
 
@@ -418,10 +468,10 @@ const NodeManagementPanelPage = () => {
 
   // ── Summary counts ────────────────────────────────────────────────────
   const counts = {
-    active:     nodes.filter(n => n.status === 'Active' || n.status === 'Normal').length,
+    active:     nodes.filter(n => n.status?.toLowerCase() !== 'removed').length,
     trusted:    nodes.filter(n => classify(n.trustScore, n.status) === 'trusted').length,
     malicious:  nodes.filter(n => classify(n.trustScore, n.status) === 'malicious').length,
-    removed:    nodes.filter(n => n.status === 'Removed').length,
+    removed:    nodes.filter(n => n.status?.toLowerCase() === 'removed').length,
   };
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -441,7 +491,7 @@ const NodeManagementPanelPage = () => {
       <div className="d-flex align-items-center justify-content-between mb-4">
         <div>
           <h4 className="text-light fw-bold mb-1">Node Management</h4>
-          <p className="text-secondary small mb-0">Admin panel — initialize, remove, and manage 6G network nodes</p>
+          <p className="text-secondary small mb-0">Admin panel — initialize, remove, and manage Advanced 5G network nodes</p>
         </div>
         <div className="d-flex align-items-center gap-3">
           <Button size="sm" variant="success" onClick={() => setAddModal(true)} className="d-flex align-items-center gap-2">
@@ -528,6 +578,7 @@ const NodeManagementPanelPage = () => {
                   <th className="text-secondary fw-normal py-2 small">Type</th>
                   <th className="text-secondary fw-normal py-2 small">Sender / Receiver</th>
                   <th className="text-secondary fw-normal py-2 small" style={{ minWidth: 140 }}>Trust Score</th>
+                  <th className="text-secondary fw-normal py-2 small">Signal (SNR/CSI)</th>
                   <th className="text-secondary fw-normal py-2 small">Status</th>
                   <th className="text-secondary fw-normal py-2 small text-end pe-3">Actions</th>
                 </tr>
@@ -563,6 +614,12 @@ const NodeManagementPanelPage = () => {
                       {/* Trust Score */}
                       <td className="py-2 align-middle" style={{ minWidth: 140 }}>
                         <ScoreBar score={node.trustScore} />
+                      </td>
+
+                      {/* Signal Properties */}
+                      <td className="py-2 align-middle text-secondary font-monospace" style={{ fontSize: '10px' }}>
+                         <div>SNR: <span className="text-info">{node.snr?.toFixed(1) || '25.0'} dB</span></div>
+                         <div>CSI: <span className="text-warning">{node.csiBehavior?.toFixed(2) || '0.85'}</span></div>
                       </td>
 
                       {/* Status */}
@@ -617,7 +674,7 @@ const NodeManagementPanelPage = () => {
         </Card.Body>
 
         <Card.Footer className="bg-transparent border-top border-secondary p-2 text-secondary" style={{ fontSize: '11px' }}>
-          Dynamically manage 6G network nodes &nbsp;·&nbsp; Operations are recorded on the blockchain ledger
+          Dynamically manage Advanced 5G network nodes &nbsp;·&nbsp; Operations are recorded on the blockchain ledger
         </Card.Footer>
       </Card>
 

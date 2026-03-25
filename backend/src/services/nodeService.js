@@ -31,8 +31,11 @@ class NodeService {
 
         // 2. Sync with Blockchain
         try {
+            // Mapping: 'Base Station' -> 2 (ServiceProvider), 'Edge Node' -> 3 (Communicator), default -> 1 (DataRequester)
+            const role = nodeData.type === 'Base Station' ? 2 : (nodeData.type === 'Edge Node' ? 3 : 1);
+            
             // Using NodeID as the address for registration in this simulation
-            const result = await blockchainConnector.registerNode(nodeData.nodeId, 1);
+            const result = await blockchainConnector.registerNode(nodeData.nodeId, role);
             if (result.success) {
                 node.transactionHistory.push({
                     txHash: result.txHash,

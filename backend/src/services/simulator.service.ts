@@ -27,7 +27,7 @@ export class TrafficSimulatorService {
 
   startSimulation() {
     this.isRunning = true;
-    console.log('[Simulator] 🟢 6G Traffic Simulation Started');
+    console.log('[Simulator] 🟢 Advanced 5G Traffic Simulation Started');
     
     this.intervalId = setInterval(() => this.generateTrafficTick(), 2000); // generate every 2 seconds
   }

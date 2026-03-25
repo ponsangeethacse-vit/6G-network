@@ -12,7 +12,7 @@ const SOCKET_URL = 'http://localhost:4000';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Severity = 'critical' | 'high' | 'medium' | 'low';
-type AttackType = 'All' | 'DDoS Attack' | 'Sybil Attack' | 'Data Manipulation' | 'Insider Threat';
+type AttackType = 'All' | string;
 
 interface Alert {
   id: string;
@@ -35,12 +35,16 @@ const SEV: Record<Severity, { color: string; bg: string; border: string; label: 
   low:      { color: 'text-success', bg: 'rgba(25,135,84,0.08)',   border: 'rgba(25,135,84,0.20)',  label: 'LOW',      icon: <Activity size={14} /> },
 };
 
-// ─── Attack type icon ─────────────────────────────────────────────────────────
 const typeIcon = (type: string) => {
-  if (type.includes('DDoS'))       return <Siren size={15} className="text-danger" />;
-  if (type.includes('Sybil'))      return <Cpu size={15} className="text-warning" />;
-  if (type.includes('Data'))       return <ShieldOff size={15} className="text-info" />;
-  if (type.includes('Insider'))    return <ShieldAlert size={15} className="text-orange" style={{ color: '#fd7e14' }} />;
+  const t = type.toLowerCase();
+  if (t.includes('ddos'))       return <Siren size={15} className="text-danger" />;
+  if (t.includes('sybil'))      return <Cpu size={15} className="text-warning" />;
+  if (t.includes('data'))       return <ShieldOff size={15} className="text-info" />;
+  if (t.includes('insider'))    return <ShieldAlert size={15} className="text-orange" style={{ color: '#fd7e14' }} />;
+  if (t.includes('poison'))     return <AlertTriangle size={15} className="text-purple" style={{ color: '#af52de' }} />;
+  if (t.includes('flooding'))   return <Activity size={15} className="text-danger" />;
+  if (t.includes('spoof'))      return <ShieldOff size={15} className="text-warning" />;
+  if (t.includes('suspicious')) return <AlertTriangle size={15} className="text-warning" />;
   return <AlertTriangle size={15} className="text-secondary" />;
 };
 
@@ -65,7 +69,7 @@ const AlertRow = ({ alert, onResolve }: { alert: Alert; onResolve: (id: string) 
         <div className="d-flex align-items-start gap-2 flex-grow-1">
           {typeIcon(alert.type)}
           <div>
-            <p className={`mb-0 fw-bold small ${sev.color}`}>{alert.message}</p>
+            <p className={`mb-0 fw-bold small ${sev.color} text-capitalize`}>{alert.message}</p>
             <p className="mb-1 text-secondary" style={{ fontSize: '11px' }}>{alert.detail}</p>
             <div className="d-flex flex-wrap gap-2 align-items-center">
               <Badge
@@ -184,8 +188,9 @@ const AttackDetectionMonitorPage = () => {
   const resolved   = alerts.filter(a => a.resolved).length;
 
   // ── Attack type breakdown for mini table ─────────────────────────────────
-  const ATTACK_TYPES: AttackType[] = ['DDoS Attack', 'Sybil Attack', 'Data Manipulation', 'Insider Threat'];
-  const typeBreakdown = ATTACK_TYPES.map(t => ({
+  // Derive types dynamically from current alert history
+  const dynamicTypes = Array.from(new Set(alerts.map(a => a.type))).sort();
+  const typeBreakdown = dynamicTypes.map(t => ({
     type: t,
     total: alerts.filter(a => a.type === t).length,
     critical: alerts.filter(a => a.type === t && a.severity === 'critical').length,
@@ -200,7 +205,8 @@ const AttackDetectionMonitorPage = () => {
         <div>
           <h4 className="text-light fw-bold mb-1">Attack Detection Monitor</h4>
           <p className="text-secondary small mb-0">
-            AI-driven real-time threat detection &nbsp;·&nbsp; Socket + REST feed
+            Live Advanced 5G threat telemetry and anomaly detection
+ &nbsp;·&nbsp; Socket + REST feed
           </p>
         </div>
         <div className="d-flex align-items-center gap-3">
@@ -262,7 +268,7 @@ const AttackDetectionMonitorPage = () => {
 
               {/* Attack type filter row */}
               <div className="d-flex gap-2 flex-wrap mt-2">
-                {(['All', ...ATTACK_TYPES] as AttackType[]).map(t => (
+                {['All', ...dynamicTypes].map(t => (
                   <Button
                     key={t}
                     size="sm"
@@ -322,7 +328,7 @@ const AttackDetectionMonitorPage = () => {
                   <tbody>
                     {typeBreakdown.map(({ type, total, active, critical }) => (
                       <tr key={type} style={{ cursor: 'pointer' }} onClick={() => setTypeFilter(type as AttackType)}>
-                        <td className="px-3 py-2 d-flex align-items-center gap-2 small text-light border-0">
+                        <td className="px-3 py-2 d-flex align-items-center gap-2 small text-light border-0 text-capitalize">
                           {typeIcon(type)}{type}
                         </td>
                         <td className="text-center py-2 small text-secondary">{total}</td>

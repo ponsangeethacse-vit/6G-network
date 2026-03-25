@@ -14,7 +14,7 @@ from modules.model_lstm import ModelLSTMAttackDetector
 from modules.model_dempster_shafer import ModelDempsterShaferFusion
 from modules.model_trust_learning import ModelTrustLearning
 
-app = FastAPI(title="6G TrustGuard AI Microservice", description="Refactored Secure Federated Learning Workflow")
+app = FastAPI(title="Advanced 5G TrustGuard AI Microservice", description="Refactored Secure Federated Learning Workflow")
 
 # ─── Initialize Modules ────────────────────────────────────────────────────────
 phys_auth = PhysicalAuth()
@@ -74,7 +74,7 @@ class TrustUpdateRequest(BaseModel):
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy", "service": "6G-AI-Microservice", "pipeline": "Refactored"}
+    return {"status": "healthy", "service": "Advanced-5G-AI-Microservice", "pipeline": "Refactored"}
 
 @app.post("/pipeline/process")
 def process_pipeline(req: PipelineRequest):

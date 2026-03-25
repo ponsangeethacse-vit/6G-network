@@ -11,16 +11,30 @@ class PhysicalAuthService {
         for (let i = 0; i < 20; i++) {
             const hex = (i + 1).toString(16).padStart(40, '0');
             const address = `0x${hex}`;
-            
-            // Create a deterministic signature based on address
-            const rfFingerprint = crypto.createHash('sha1').update(address + "SECRET_6G_SALT").digest('hex').slice(0, 16).toUpperCase();
-            
+            this.initializeNodeProfile(address);
+        }
+    }
+
+    initializeNodeProfile(address, customData = null) {
+        if (customData) {
             this.profiles[address] = {
-                rfFingerprint: `RF_${rfFingerprint}`,
+                rfFingerprint: customData.rfFingerprint || `RF_${this._generateDeterministicFingerprint(address)}`,
+                csiBehavior: customData.csiBehavior !== undefined ? parseFloat(customData.csiBehavior) : 0.85,
+                snr: customData.snr !== undefined ? parseFloat(customData.snr) : 25.0
+            };
+        } else {
+            // Create a deterministic signature based on address
+            this.profiles[address] = {
+                rfFingerprint: `RF_${this._generateDeterministicFingerprint(address)}`,
                 csiBehavior: 0.85, // base nominal
                 snr: 25.0         // base dBm nominal
             };
         }
+        console.log(`[PhysicalAuth] Profile initialized for ${address}`, this.profiles[address]);
+    }
+
+    _generateDeterministicFingerprint(address) {
+        return crypto.createHash('sha1').update(address + "SECRET_ADVANCED_5G_SALT").digest('hex').slice(0, 16).toUpperCase();
     }
 
     verifyIdentity(nodeAddress, providedMetrics) {

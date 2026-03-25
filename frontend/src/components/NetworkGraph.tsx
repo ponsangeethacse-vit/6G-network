@@ -35,7 +35,7 @@ const NetworkGraph = ({ nodes }: { nodes: NodeData[] }) => {
 
   if (!nodes || nodes.length === 0) return (
       <div className="w-100 h-100 d-flex align-items-center justify-content-center text-info">
-          Initializing 6G Network Mesh...
+          Initializing Advanced 5G Network Mesh...
       </div>
   );
 

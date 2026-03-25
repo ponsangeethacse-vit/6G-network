@@ -19,7 +19,7 @@ const LoginPage = () => {
           <Card.Body className="p-5 text-center">
             <div className="mb-4">
               <Shield className="text-primary mb-3" size={64} />
-              <h3 className="text-light fw-bold tracking-tight">6G Trust Defender</h3>
+              <h3 className="text-light fw-bold tracking-tight">Advanced 5G Trust Defender</h3>
               <p className="text-secondary small">Operator Access Portal</p>
             </div>
             

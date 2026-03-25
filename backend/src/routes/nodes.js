@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Node = require('../models/Node');
 const nodeService = require('../services/nodeService');
+const simulationState = require('../services/simulationState');
 
 // Get all nodes from DB
 router.get('/', async (req, res) => {
@@ -17,6 +18,7 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const node = await nodeService.createNode(req.body);
+    await simulationState.syncNodesFromDB();
     res.status(201).json(node);
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -37,6 +39,7 @@ router.put('/:nodeId', async (req, res) => {
 router.delete('/:nodeId', async (req, res) => {
   try {
     const node = await nodeService.removeNode(req.params.nodeId);
+    await simulationState.syncNodesFromDB();
     res.json({ message: "Node removed successfully", node });
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -77,6 +80,7 @@ router.post('/simulate', async (req, res) => {
         });
     }
     await Node.insertMany(nodes);
+    await simulationState.syncNodesFromDB();
     res.status(201).json({ message: "100 nodes simulated" });
   } catch (err) {
     res.status(500).json({ message: err.message });

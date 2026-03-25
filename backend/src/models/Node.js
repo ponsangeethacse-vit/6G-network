@@ -14,6 +14,9 @@ const nodeSchema = new mongoose.Schema({
     transTrust: { type: Number, default: 0.5 },
     behaviorTrust: { type: Number, default: 0.5 }
   },
+  rfFingerprint: { type: String, default: "" },
+  csiBehavior: { type: Number, default: 0.85 },
+  snr: { type: Number, default: 25.0 },
   status: { type: String, enum: ['Normal', 'Suspicious', 'Malicious', 'Active', 'Removed'], default: 'Normal' },
   transactionHistory: [{
     txHash: String,

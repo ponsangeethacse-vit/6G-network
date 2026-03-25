@@ -164,7 +164,7 @@ export default function TrustDashboard({ socket, socketUrl }: DashboardProps) {
         <Card bg="dark" border="secondary" className="shadow-lg h-100">
           <Card.Header className="bg-black bg-opacity-25 border-bottom border-secondary p-3">
             <h5 className="mb-0 text-light d-flex align-items-center gap-2">
-              <Activity className="text-primary" size={20} /> Active 6G Nodes
+              <Activity className="text-primary" size={20} /> Active Advanced 5G Nodes
             </h5>
           </Card.Header>
           <ListGroup variant="flush" className="overflow-auto bg-dark" style={{ maxHeight: '600px' }}>
