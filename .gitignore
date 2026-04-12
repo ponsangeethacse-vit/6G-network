@@ -22,3 +22,20 @@ yarn-error.log*
 # System
 .DS_Store
 Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.class
+venv/
+env/
+.venv/
+
+# Datasets
+MachineLearningCVE/
+ai-service/data/
+
+# Misc
+python-installer.exe
+ai-service/pip_log.txt
+

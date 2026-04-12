@@ -2,6 +2,37 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uvicorn
 import math
+import os
+import numpy as np
+
+# ---------------------------------------------------------
+# Step 6: MODEL EXPORT / LOADING
+# ---------------------------------------------------------
+# Show how to load the Keras .h5 models in FastAPI. 
+# We use a try-except block so the API still runs if TensorFlow isn't natively available on this OS version.
+try:
+    from tensorflow.keras.models import load_model
+    import pickle
+    import json
+    
+    # Load MinMaxScaler
+    scaler_path = os.path.join("data", "scaler.pkl")
+    with open(scaler_path, "rb") as f:
+        scaler = pickle.load(f)
+        
+    # Load Models
+    autoencoder_model = load_model(os.path.join("data", "autoencoder.h5"))
+    lstm_model = load_model(os.path.join("data", "lstm_model.h5"))
+    
+    # Load Threshold
+    with open(os.path.join("data", "autoencoder_threshold.json"), "r") as f:
+        ae_threshold = json.load(f)["threshold"]
+        
+    TF_AVAILABLE = True
+    print("✅ TensorFlow Models Loaded Successfully!")
+except Exception as e:
+    print(f"⚠️ Warning: Could not load TF models locally ({e}). Using rule-based fallback mode for pipeline testing.")
+    TF_AVAILABLE = False
 
 from modules.physical_auth import PhysicalAuth
 from modules.autoencoder_anomaly import AutoencoderAnomaly
@@ -37,6 +68,12 @@ class AttackMetrics(BaseModel):
     bandwidth_usage: float
     authentication_failures: int
     channel_quality: float = 1.0 # Added for Stage 1
+
+class DatasetMetrics(BaseModel):
+    packet_rate: float
+    latency: float
+    bandwidth: float
+    failed_requests: int
 
 class PipelineRequest(BaseModel):
     node_address: str
@@ -195,10 +232,63 @@ def predict_attack(metrics: AttackMetrics):
         return {"classification": "DDoS", "risk_score": 85.0}
     return {"classification": "Normal", "risk_score": 10.0}
 
+@app.post("/predict-anomaly")
+def predict_anomaly(metrics: DatasetMetrics):
+    """
+    Step 7: Implements the exact format defined in Step 3.
+    """
+    # Convert input to array format for ML
+    raw_data = np.array([[metrics.packet_rate, metrics.latency, metrics.bandwidth, metrics.failed_requests]])
+    
+    if TF_AVAILABLE:
+        # Scale data using our saved MinMaxScaler
+        scaled_data = scaler.transform(raw_data)
+        
+        # 1. Autoencoder Anomaly Detection (Reconstruction Error)
+        reconstruction = autoencoder_model.predict(scaled_data)
+        reconstruction_error = np.mean(np.abs(reconstruction - scaled_data))
+        
+        # Calculate anomaly score (0.0 - 1.0)
+        # Scaled dynamically: if exactly at threshold it's 0.5. Maxes at 1.0.
+        ae_score = min(1.0, reconstruction_error / (ae_threshold * 2))
+        
+        # 2. LSTM (Simulating a single sequence frame for simplicity in stateless API)
+        # In reality you'd gather the last 5 HTTP requests associated with this IP.
+        seq_data = np.repeat(scaled_data, 5, axis=0).reshape(1, 5, 4)
+        lstm_attack_prob = float(lstm_model.predict(seq_data)[0][0])
+        
+    else:
+        # Graceful fallback so your Node.js backend integration continues working!
+        # Simulation rule matching general Keras outputs:
+        ae_score = 0.05
+        lstm_attack_prob = 0.02
+        
+        if metrics.failed_requests > 20 or metrics.packet_rate > 1000:
+            ae_score = 0.85
+            lstm_attack_prob = 0.90
+    
+    classification = "Anomaly (DDoS)" if ae_score > 0.5 or lstm_attack_prob > 0.6 else "Normal"
+    
+    return {
+        "autoencoder_anomaly_score": round(ae_score, 4),
+        "lstm_temporal_probability": round(lstm_attack_prob, 4),
+        "overall_classification": classification
+    }
+
 @app.post("/calculate-trust")
-def calculate_trust(metrics: TrustMetrics):
-    raw = (metrics.behavioral_trust * 0.35 + metrics.historical_trust * 0.25)
-    return {"fusion_trust_score": round(raw * 100, 2)}
+def calculate_trust(metrics: dict):
+    # Step 7: A flexible Trust score based on ML anomaly output
+    ae_score = float(metrics.get("autoencoder_anomaly_score", 0.0))
+    lstm_prob = float(metrics.get("lstm_temporal_probability", 0.0))
+    
+    # High anomaly = low trust
+    max_risk = max(ae_score, lstm_prob)
+    trust_score = 100.0 - (max_risk * 100)
+    
+    return {
+        "fusion_trust_score": round(trust_score, 2),
+        "classification": "Trusted" if trust_score > 70 else "Suspicious" if trust_score > 40 else "Malicious"
+    }
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

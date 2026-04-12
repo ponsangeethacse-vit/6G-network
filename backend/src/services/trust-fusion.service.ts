@@ -89,7 +89,7 @@ export class TrustFusionService {
     return sum / feedbacks.length;
   }
 
-  async computeTrust(nodeAddress: string, attackType: string = "Normal"): Promise<number | null> {
+  async computeTrust(nodeAddress: string, aiResult: any = {}): Promise<number | null> {
     const behavioral = this.calculateDirectTrust(nodeAddress);
     const reputation = this.calculateIndirectTrust(nodeAddress);
     
@@ -103,8 +103,17 @@ export class TrustFusionService {
     // 🌍 Context Trust (e.g., node role or ambient metrics)
     const context = 0.8; // Stand-in dynamic parameter supporting factor architecture
 
-    // Use Python Microservice for Fusion
-    const fusionScore = await mlEngineService.computeFusionTrust(behavioral, historical, reputation, context);
+    // Use Python Microservice for Fusion (which now requires the anomaly metrics)
+    let fusionResponse;
+    if (aiResult && aiResult.autoencoder_anomaly_score !== undefined) {
+        fusionResponse = await mlEngineService.computeFusionTrust(aiResult);
+    } else {
+        // Fallback or Normal format handling
+        fusionResponse = { score: 85.0, classification: 'Trusted' };
+    }
+    
+    const fusionScore = fusionResponse.score;
+    const attackType = aiResult.overall_classification || "Normal";
     
     let finalScore = fusionScore;
 

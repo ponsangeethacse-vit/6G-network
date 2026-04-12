@@ -7,16 +7,15 @@ export class MLEngineService {
 
 
   // Uses Python Microservice to predict fusion score based on 4 trust factors
-  async computeFusionTrust(behavioral: number, historical: number, reputation: number, context: number): Promise<number> {
+  // Uses Python Microservice to predict fusion score based on Anomaly metrics
+  async computeFusionTrust(metrics: { autoencoder_anomaly_score: number, lstm_temporal_probability: number }): Promise<{ score: number, classification: string }> {
     try {
       const response = await fetch(`${PYTHON_AI_URL}/calculate-trust`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          behavioral_trust: behavioral,
-          historical_trust: historical,
-          reputation_trust: reputation,
-          context_trust: context
+          autoencoder_anomaly_score: metrics.autoencoder_anomaly_score,
+          lstm_temporal_probability: metrics.lstm_temporal_probability
         })
       });
 
@@ -25,12 +24,11 @@ export class MLEngineService {
       }
 
       const data = await response.json();
-      return Math.round(data.fusion_trust_score); // FastAPI returns already scaled 0-100 score
+      return { score: data.fusion_trust_score, classification: data.classification };
       
     } catch (error: any) {
-      console.error('[MLEngine] Error calling Python AI Service:', error.message);
-      // Fallback weighted average if microservice is offline
-      return Math.round(((behavioral * 0.35) + (historical * 0.25) + (reputation * 0.20) + (context * 0.20)) * 100);
+      console.error('[MLEngine] Error calling Python AI Service Trust:', error.message);
+      return { score: 80.0, classification: 'Trusted' };
     }
   }
 
@@ -47,9 +45,10 @@ export class MLEngineService {
   }
 
   // Predict attack classification based on network traffic metrics
-  async predictAttack(metrics: { packet_rate: number, latency: number, failed_requests: number, connection_attempts: number }): Promise<string> {
+  // Predict attack classification based on network traffic metrics via Autoencoder + LSTM
+  async predictAnomaly(metrics: { packet_rate: number, latency: number, bandwidth: number, failed_requests: number }): Promise<any> {
     try {
-      const response = await fetch(`${PYTHON_AI_URL}/predict-attack`, {
+      const response = await fetch(`${PYTHON_AI_URL}/predict-anomaly`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(metrics)
@@ -57,11 +56,16 @@ export class MLEngineService {
 
       if (!response.ok) throw new Error(`Python AI Microservice responded with status: ${response.status}`);
       const data = await response.json();
-      return data.classification;
+      return data;
       
     } catch (e: any) {
       console.error('[MLEngine] Error predicting attack type:', e.message);
-      return 'Normal'; // Fallback
+      // Fallback object to avoid crashes
+      return {
+          autoencoder_anomaly_score: 0.1,
+          lstm_temporal_probability: 0.1,
+          overall_classification: 'Normal'
+      };
     }
   }
 }
