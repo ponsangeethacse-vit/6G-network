@@ -136,7 +136,7 @@ export class TrafficSimulatorService {
     });
 
     // 4. Compute composite trust
-    const score = await trustFusionService.computeTrust(node.nodeId, aiResult);
+    const score = (await trustFusionService.computeTrust(node.nodeId, aiResult)) ?? node.trustScore;
     nodeManager.updateNodeTrust(node.nodeId, score);
 
     // 5. Native MongoDB Integration

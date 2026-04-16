@@ -1,0 +1,49 @@
+# Module 1: Network Simulation
+
+## 1. Overview
+The Network Simulation module is the engine of the 6G TrustGuard system. It creates a realistic, high-fidelity 5G/6G environment by simulating heterogeneous network nodes (IoT, Edge, Base Stations) and driving them with real-world network traffic data.
+
+## 2. Key Files & Implementation
+
+### 📂 `datasetLoader.ts`
+**Location:** `backend/src/services/simulation/datasetLoader.ts`
+**Function:** Loads the **CICIDS2017** dataset into memory. This dataset contains millions of rows of real network traffic, both normal and malicious (DDoS, Brute Force, etc.).
+
+```typescript
+// Key Logic: Reading the CSV and caching rows for the simulator
+async load() {
+    this.rows = [];
+    return new Promise((resolve, reject) => {
+        fs.createReadStream(DATASET_PATH)
+            .pipe(csv())
+            .on('data', (data) => this.rows.push(data))
+            .on('end', () => {
+                this.isLoaded = true;
+                resolve(this.rows);
+            });
+    });
+}
+```
+
+### 📂 `nodeManager.ts`
+**Location:** `backend/src/services/simulation/nodeManager.ts`
+**Function:** Manages the lifecycle and "personalities" of 50–100 nodes. It assigns each node a type (IoT, Edge, BS) and a behavioral profile.
+
+### 📂 `simulator.js`
+**Location:** `backend/src/services/simulation/simulator.js`
+**Function:** The heart of the simulation loop. Every 2 seconds (a "tick"), it fetches a unique data row for every active node and processes it.
+
+## 3. Data Flow
+1. **Startup:** `datasetLoader` loads data; `nodeManager` spawns 75 nodes.
+2. **Tick (2s):** `Simulator` iterates through all nodes.
+3. **Data Retrieval:** For each node, it picks the next row from the dataset based on that node's `datasetIndex`.
+4. **Behavior Scaling:** The raw data is multiplied by "Behavioral Profiles" (e.g., an IoT device has lower bandwidth than a Base Station).
+5. **Noise Injection:** Small random variations are added to ensure the simulation doesn't feel like a looped recording.
+
+## 4. Simplified Explanation (The "Digital City" Analogy)
+Imagine a massive **Digital City** where:
+- **IoT Devices** are like small pedestrians walking on the sidewalk (low traffic).
+- **Edge Nodes** are like cars in the lane (medium traffic).
+- **Base Stations** are like high-speed trains (bulk traffic).
+
+The **Network Simulation** acts as the "Time Engine" that makes everyone move every 2 seconds. Instead of making up how they move, we use a "Script" (the **CICIDS2017 Dataset**) which records how real traffic moved in a real network. Some parts of the script contain "Accidents" (Attacks), which our AI will later try to spot.

@@ -30,8 +30,22 @@ async function syncNodesFromDB() {
     
     let nodesFetched = [];
     if (dbNodes.length === 0) {
-      console.log('[SimulationState] No nodes found, generating defaults...');
-      nodesFetched = generateDefaultNodes();
+      console.log('[SimulationState] No database nodes found, importing from scalable NodeManager...');
+      const nodeManager = require('./simulation/nodeManager');
+      const simNodes = nodeManager.getAllNodes();
+      nodesFetched = simNodes.map(n => {
+          let role = 4;
+          if (n.type === 'iot') role = 1;
+          else if (n.type === 'base_station') role = 2;
+          else if (n.type === 'edge') role = 3;
+          
+          return {
+              address: n.nodeId,
+              type: n.type,
+              role: role,
+              profile: n.type === 'malicious' ? 'Malicious' : 'Healthy'
+          };
+      });
       // Optional: Seed the defaults back into nodeService so they persist in memory/DB
       for (const n of nodesFetched) {
         // We don't await here to avoid potential recursion or slow start

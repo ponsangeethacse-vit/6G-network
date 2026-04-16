@@ -1,0 +1,42 @@
+# Module 2: Data Processing
+
+## 1. Overview
+The Data Processing module acts as the translator between the raw Network Simulation and the AI Brain. Its job is to take raw dataset numbers, scale them to represent specific 6G hardware, and format them into a "Tensor" (a structured list of numbers) that the AI models can understand.
+
+## 2. Key Files & Implementation
+
+### 📂 `simulator.js` (Preprocessing Logic)
+**Location:** `backend/src/services/simulation/simulator.js`
+**Function:** Extracts raw metrics and applies behavioral scaling based on node types.
+
+```javascript
+// Key logic: Scaling raw metrics into 6G context
+const profile = nodeManager.getProfile(node.type);
+const scaledMetrics = {
+    packet_rate: row.packet_rate * profile.multipliers[0] * noise(),
+    latency: row.latency * profile.multipliers[1] * noise(),
+    bandwidth: row.bandwidth * profile.multipliers[2] * noise(),
+    failed_requests: row.failed_requests * profile.multipliers[3] * noise()
+};
+```
+
+### 📂 `ml-engine.service.ts`
+**Location:** `backend/src/services/ml-engine.service.ts`
+**Function:** Orchestrates the communication between the Node.js backend and the Python AI service. It ensures data is clean and handles the asynchronous request-response cycle.
+
+### 📂 `preprocess_dataset.py`
+**Location:** `ai-service/preprocess_dataset.py`
+**Function:** A utility script used by the AI team to clean and normalize the CICIDS2017 dataset (scaling values between 0 and 1) so the models can read them efficiently.
+
+## 3. Data Flow
+1. **Extraction:** The simulator pulls raw traffic stats from the CSV row.
+2. **Scaling:** Metrics are multiplied (e.g., IoT metrics are scaled down, Base Station metrics are scaled up).
+3. **Serialization:** Node.js converts the metrics into a JSON object.
+4. **Transmission:** The data is sent via HTTP POST to the Python AI microservice at `http://localhost:8000/predict-anomaly`.
+5. **Back-end Sync:** After AI processing, the refined results return to Node.js for trust calculation.
+
+## 4. Simplified Explanation (The "Traffic Sensor" Analogy)
+Think of **Data Processing** as a **Smart Traffic Camera**:
+- The **Simulation** provides the "Raw Video" of what's happening.
+- The **Data Processing** module looks at that video and counts exactly how many cars passed (Packet Rate), how fast they moved (Latency), and if any cars crashed (Failed Requests). 
+- It then writes these down in a neat "Report Card" and hands it over to the **AI Detective** to see if anything looks suspicious.

@@ -27,11 +27,20 @@ const localBlockchainService = require('./services/localBlockchainService'); // 
 app.use('/api/admin/nodes', nodesRouter);
 app.use('/api/admin/transfers', transfersRouter);
 const simulationState = require('./services/simulationState');
+const datasetLoader = require('./services/simulation/datasetLoader');
+const nodeManager = require('./services/simulation/nodeManager');
+const simulator = require('./services/simulation/simulator');
 
 // ─── Simulation State ────────────────────────────────────────────────────────
 const MOCK_NODES = simulationState.getNodes();
 const trustScores = simulationState.getTrustScores();
 const activeAttacks = simulationState.getActiveAttacks();
+
+// Sync initial trust scores
+MOCK_NODES.forEach(n => {
+  trustScores[n.address] = 100;
+  activeAttacks[n.address] = 'Normal';
+});
 
 // Initial trust scores populated by simulationState.syncNodesFromDB()
 const alerts = [];           // attack alerts list
@@ -801,16 +810,19 @@ app.post('/api/nodes/:addr/trust', (req, res) => {
 app.post('/api/simulator/attack', (req, res) => {
   const { node, attackType } = req.body;
   if (node) {
+    const sharedAttacks = simulationState.getActiveAttacks();
+    const nodes = simulationState.getNodes();
+    
     // 🔬 Containment Rule 6: Max 15% Malicious Simulator Limit
-    const maliciousCount = Object.values(activeAttacks).filter(a => a !== 'Healthy' && a !== 'Normal' && a !== 'Healthy Traffic' && a !== 'Normal Traffic').length;
-    const maxAllowed = Math.ceil(MOCK_NODES.length * 0.15);
+    const maliciousCount = Object.values(sharedAttacks).filter(a => a !== 'Healthy' && a !== 'Normal' && a !== 'Healthy Traffic' && a !== 'Normal Traffic').length;
+    const maxAllowed = Math.ceil(nodes.length * 0.15);
 
-    if (attackType !== 'Normal' && maliciousCount >= maxAllowed && !activeAttacks[node]) {
+    if (attackType !== 'Normal' && maliciousCount >= maxAllowed && !sharedAttacks[node]) {
        console.log(`[Simulator] 🛡️ Manual Attack Blocked for ${node.slice(0,6)} (Limit of ${maxAllowed} reached)`);
        return res.status(400).json({ error: `Attack limit reached (${maxAllowed}). Stop previous attacks first.` });
     }
 
-    activeAttacks[node] = attackType;
+    sharedAttacks[node] = attackType;
     console.log(`[Simulator] ⚔️ Attack [${attackType}] triggered on ${node}`);
     io.emit('simulator_mode', { node, attackType, isMaliciousMode: true });
     return res.json({ success: true, message: `Started ${attackType} on ${node}` });
@@ -821,7 +833,8 @@ app.post('/api/simulator/attack', (req, res) => {
 app.post('/api/simulator/stop-attack', (req, res) => {
   const { node } = req.body;
   if (node) {
-    delete activeAttacks[node];
+    const sharedAttacks = simulationState.getActiveAttacks();
+    delete sharedAttacks[node];
     console.log(`[Simulator] 🛡️ Attack stopped on ${node}`);
     io.emit('simulator_mode', { node, attackType: 'Normal', isMaliciousMode: false });
     return res.json({ success: true, message: `Stopped attack on ${node}` });
@@ -847,47 +860,19 @@ server.listen(PORT, () => {
   console.log(`\n✅ Backend running on http://localhost:${PORT}`);
   console.log('✅ Advanced 5G Simulator starting...\n');
   
-  // Start simulator after syncing nodes
-  simulationState.syncNodesFromDB().then(() => {
-    setInterval(runSimulatorTick, 2000);
-  });
-
-  // 🎲 Stochastic Attack Generator (Every 5-10 seconds)
-  setInterval(() => {
-    const maliciousCount = Object.values(activeAttacks).filter(a => a !== 'Healthy' && a !== 'Normal' && a !== 'Healthy Traffic' && a !== 'Normal Traffic').length;
-    const maxAllowed = Math.ceil(MOCK_NODES.length * 0.15); // Max 15% (e.g., 1 node)
-
-    const node = MOCK_NODES[Math.floor(Math.random() * MOCK_NODES.length)].address;
-    const rand = Math.random();
-
-    if (maliciousCount >= maxAllowed) {
-       // Stop generating NEW attacks. If picked node is malicious, allow healing to Normal
-       if (activeAttacks[node] && activeAttacks[node] !== 'Healthy' && activeAttacks[node] !== 'Normal' && rand < 0.50) {
-          delete activeAttacks[node];
-          console.log(`[Stochastic] 🛡️ Node ${node.slice(0,6)} forced back to Healthy for recovery balancer.`);
-          io.emit('simulator_mode', { node, attackType: 'Healthy', isMaliciousMode: false });
-       }
-       return;
+  // Start the new scalable dataset-driven simulator
+  (async () => {
+    try {
+      await simulationState.syncNodesFromDB();
+      await datasetLoader.load();
+      await simulator.start(io); // Passing io instance
+    } catch (err) {
+      console.error('[Main] Failed to start simulation:', err.message);
     }
+  })();
 
-    if (rand < 0.10) { // 10% Malicious
-      const attacks = ['DDoS attack', 'sybil attack', 'poison attack', 'data manipulation'];
-      const chosen = attacks[Math.floor(Math.random() * attacks.length)];
-      activeAttacks[node] = chosen;
-      console.log(`[Stochastic] 🎲 Spontaneous Attack [${chosen}] initiated on ${node.slice(0,6)}`);
-      io.emit('simulator_mode', { node, attackType: chosen, isMaliciousMode: true });
-    } else if (rand < 0.30) { // 20% Suspicious
-      activeAttacks[node] = 'Suspicious';
-      console.log(`[Stochastic] 🎲 Spontaneous [Suspicious] state set on ${node.slice(0,6)}`);
-      io.emit('simulator_mode', { node, attackType: 'Suspicious', isMaliciousMode: true });
-    } else { // 70% Normal
-      if (activeAttacks[node]) {
-        delete activeAttacks[node];
-        console.log(`[Stochastic] 🛡️ Node ${node.slice(0,6)} returned to Healthy`);
-        io.emit('simulator_mode', { node, attackType: 'Healthy', isMaliciousMode: false });
-      }
-    }
-  }, Math.floor(Math.random() * 5000) + 5000);
+  // Legacy stochastic attack generator removed.
+  // The new simulator.js handles behavior profiles and autonomous malicious spikes.
 });
 
 // ─── Optional: Try MongoDB (non-blocking) ─────────────────────────────────────

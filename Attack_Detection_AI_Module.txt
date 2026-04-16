@@ -1,0 +1,34 @@
+# Module 3: Attack Detection (AI)
+
+## 1. Overview
+The Attack Detection module is the intelligence layer of the system. It uses a hybrid AI architecture (Spatial + Temporal) to identify sophisticated network attacks like Slowloris, Heartbleed, and DDoS that traditional firewalls often miss.
+
+## 2. Key Files & Implementation
+
+### 📂 `main.py`
+**Location:** `ai-service/main.py`
+**Function:** A FastAPI microservice that orchestrates the detection pipeline. It receives metrics from the backend and runs them through three stages of AI.
+
+### 📂 `model_autoencoder.py` (Spatial Detection)
+**Location:** `ai-service/modules/model_autoencoder.py`
+**Function:** An Unsupervised Autoencoder. It learns what "Normal" traffic looks like. If incoming data differs significantly from the learned pattern (high reconstruction error), it's flagged as an anomaly.
+
+### 📂 `model_lstm.py` (Temporal Detection)
+**Location:** `ai-service/modules/model_lstm.py`
+**Function:** A Long Short-Term Memory (LSTM) network. It looks for patterns *over time*. For example, a single failed request is normal, but 100 failed requests in 1 second is an "Attack" pattern.
+
+### 📂 `model_dempster_shafer.py` (The Judge)
+**Location:** `ai-service/modules/model_dempster_shafer.py`
+**Function:** Implements **Dempster-Shafer Theory**. It acts as a judge that combines the opinions of the Autoencoder and the LSTM to make a final, high-confidence decision.
+
+## 3. Detection Pipeline (The 3-Step Process)
+1. **Stage 1 (Pattern Check):** The Autoencoder checks if the data *at this instant* looks weird.
+2. **Stage 2 (Trend Check):** The LSTM checks if the behavior *over the last 10 seconds* looks like a known attack signature.
+3. **Stage 3 (Evidence Fusion):** The results are fused together. If both agree, the confidence is 100%. If they disagree, the Fusion engine calculates the most likely truth.
+
+## 4. Simplified Explanation (The "Security Guards" Analogy)
+Imagine a high-security bank guarded by two specialists:
+- **Guard A (The Autoencoder):** He knows exactly what the regular customers look like. If someone walks in wearing a mask, he immediately knows it's "weird."
+- **Guard B (The LSTM):** He watches behavior over time. If a regular customer walks in (Normal) but starts looking at the vault door every 5 minutes (Pattern), Guard B gets suspicious.
+
+The **Dempster-Shafer Engine** is the **Chief of Security**. He listens to both guards. If Guard A says "He looks weird" and Guard B says "He is acting weird," the Chief triggers the alarm (**Attack Detected**).

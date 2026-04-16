@@ -15,8 +15,17 @@ class BlockchainConnector {
         if (this.initialized) return;
 
         try {
+            // Check if the blockchain node is actually online to prevent Ethers.js spam
+            try {
+                await fetch('http://127.0.0.1:8545', { method: 'POST' });
+            } catch (e) {
+                console.warn('[BlockchainConnector] ⚠️ Local Hardhat node offline on :8545. Running in mock mode.');
+                this.initialized = true;
+                return;
+            }
+
             // Hardhat default node URL
-            this.provider = new ethers.JsonRpcProvider('http://127.0.0.1:8545');
+            this.provider = new ethers.JsonRpcProvider('http://127.0.0.1:8545', undefined, { staticNetwork: true });
 
             // Default account 0 from Hardhat node
             this.wallet = new ethers.Wallet(
