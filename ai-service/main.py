@@ -269,8 +269,15 @@ def predict_anomaly(metrics: DatasetMetrics):
             ae_score = 0.85
             lstm_attack_prob = 0.90
     
-    # Lowered LSTM threshold to 0.5
-    classification = "Anomaly (DDoS)" if ae_score > 0.40 or lstm_attack_prob > 0.50 else "Normal"
+    if ae_score > 0.40 or lstm_attack_prob > 0.50:
+        if metrics.latency > 400.0 and metrics.failed_requests < 20:
+            classification = "Poison Attack"
+        elif metrics.failed_requests >= 20 and metrics.latency < 400.0:
+            classification = "Sybil Attack"
+        else:
+            classification = "DDoS Attack"
+    else:
+        classification = "Normal"
     
     return {
         "autoencoder_anomaly_score": round(ae_score, 4),

@@ -550,9 +550,11 @@ const NetworkDashboardPage = () => {
     if (nodes.length === 0) return;
     // Pick a random healthy-ish node
     const target = nodes[Math.floor(Math.random() * nodes.length)];
+    const attackTypes = ['DDoS', 'Sybil', 'Poison'];
+    const randomAttack = attackTypes[Math.floor(Math.random() * attackTypes.length)];
     try {
-      await axios.post(`${SOCKET_URL}/api/simulator/attack`, { node: target.address, attackType: 'DDoS' });
-      setSimMsg(`DDoS attack injected on node ${target.address.slice(-4)}`);
+      await axios.post(`${SOCKET_URL}/api/simulator/attack`, { node: target.address, attackType: randomAttack });
+      setSimMsg(`${randomAttack} attack injected on node ${target.address.slice(-4)}`);
     } catch (e) { setSimMsg('Failed to inject attack.'); }
   };
 

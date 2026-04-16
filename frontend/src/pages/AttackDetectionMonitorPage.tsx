@@ -187,9 +187,9 @@ const AttackDetectionMonitorPage = () => {
   const medCount   = alerts.filter(a => a.severity === 'medium'   && !a.resolved).length;
   const resolved   = alerts.filter(a => a.resolved).length;
 
-  // ── Attack type breakdown for mini table ─────────────────────────────────
-  // Derive types dynamically from current alert history
-  const dynamicTypes = Array.from(new Set(alerts.map(a => a.type))).sort();
+  // Derive types dynamically from current alert history, but force the main types
+  const defaultTypes = ['DDoS Attack', 'Sybil Attack', 'Poison Attack'];
+  const dynamicTypes = Array.from(new Set([...defaultTypes, ...alerts.map(a => a.type)])).sort();
   const typeBreakdown = dynamicTypes.map(t => ({
     type: t,
     total: alerts.filter(a => a.type === t).length,
@@ -252,7 +252,7 @@ const AttackDetectionMonitorPage = () => {
                 <div className="d-flex gap-2 flex-wrap">
                   {/* Severity filter */}
                   <ButtonGroup size="sm">
-                    {(['all', 'critical', 'high', 'medium'] as const).map(s => (
+                    {(['all', 'critical', 'high', 'medium', 'low'] as const).map(s => (
                       <Button
                         key={s}
                         variant={severityFilter === s ? 'primary' : 'outline-secondary'}
@@ -363,10 +363,10 @@ const AttackDetectionMonitorPage = () => {
                     <div>
                       <div className={`fw-bold small ${s.color}`}>{s.label}</div>
                       <div className="text-secondary" style={{ fontSize: '10px' }}>
-                        {key === 'critical' && 'Trust score < 30% — immediate action required'}
-                        {key === 'high'     && 'Trust score 30–50% — block pending'}
-                        {key === 'medium'   && 'Trust score 50–60% — under observation'}
-                        {key === 'low'      && 'Borderline activity — monitoring only'}
+                        {key === 'critical' && 'Trust score < 40% — immediate action required'}
+                        {key === 'high'     && 'Trust score 40–70% — severe anomaly detected'}
+                        {key === 'medium'   && 'Trust score 70–85% — suspicious activity detected'}
+                        {key === 'low'      && 'Trust score > 85% — borderline anomaly detected'}
                       </div>
                     </div>
                   </div>

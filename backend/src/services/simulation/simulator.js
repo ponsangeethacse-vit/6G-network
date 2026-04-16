@@ -99,9 +99,13 @@ class Simulator {
             scaledMetrics.bandwidth *= 5;
             scaledMetrics.latency += 1000;
             scaledMetrics.failed_requests += 50;
-        } else if (activeAttack === 'Spoofing') {
-            scaledMetrics.failed_requests += 20;
+        } else if (activeAttack === 'Sybil') {
+            scaledMetrics.failed_requests += 40;
             scaledMetrics.packet_rate *= 1.5;
+        } else if (activeAttack === 'Poison') {
+            scaledMetrics.latency += 500;
+            scaledMetrics.bandwidth *= 0.1;
+            scaledMetrics.packet_rate *= 0.5;
         }
 
         // Ensure metrics are non-negative
@@ -134,16 +138,21 @@ class Simulator {
             });
 
             // If critical anomaly, emit alert
-            if (aiResponse.overall_classification !== 'Normal' || newTrust < 60) {
-                const alertType = aiResponse.overall_classification.includes('DDoS') ? 'ddos attack' : aiResponse.overall_classification;
+            if (aiResponse.overall_classification !== 'Normal' || newTrust < 75) {
+                const alertType = aiResponse.overall_classification;
+                let severity = 'low';
+                if (newTrust < 40) severity = 'critical';
+                else if (newTrust < 70) severity = 'high';
+                else if (newTrust < 85) severity = 'medium';
+
                 this.io.emit('new_alert', {
                     id: `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
                     nodeId: node.nodeId,
                     nodeLabel: `Node ${node.nodeId.slice(2, 6).toUpperCase()}`,
                     type: alertType,
-                    message: `⚠️ ${alertType} detected`,
-                    detail: `Anomalous traffic identified via LSTM/Autoencoder (Score Dropped).`,
-                    severity: newTrust < 40 ? 'critical' : (newTrust < 60 ? 'high' : 'medium'),
+                    message: `⚠️ ${severity.toUpperCase()}: ${alertType} detected`,
+                    detail: `Anomalous traffic identified via LSTM/Autoencoder. Trust dropping to ${Math.round(newTrust)}%.`,
+                    severity: severity,
                     trustScore: Math.round(newTrust),
                     timestamp: Date.now(),
                     resolved: false
