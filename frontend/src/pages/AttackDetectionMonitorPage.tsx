@@ -171,8 +171,21 @@ const AttackDetectionMonitorPage = () => {
   }, [alerts.length]);
 
   // ── Resolve handler ──────────────────────────────────────────────────────
-  const resolveAlert = (id: string) =>
-    setAlerts(prev => prev.map(a => a.id === id ? { ...a, resolved: true } : a));
+  const resolveAlert = async (id: string) => {
+    const alert = alerts.find(a => a.id === id);
+    if (!alert) return;
+
+    try {
+      // 1. Tell backend to stop attack and restore node
+      const NodeService = (await import('../services/api.service')).NodeService;
+      await NodeService.restoreNode(alert.nodeId);
+
+      // 2. Update local state
+      setAlerts(prev => prev.map(a => a.id === id ? { ...a, resolved: true } : a));
+    } catch (err) {
+      console.error('Failed to resolve alert:', err);
+    }
+  };
 
   // ── Filtering ────────────────────────────────────────────────────────────
   const visible = alerts.filter(a => {

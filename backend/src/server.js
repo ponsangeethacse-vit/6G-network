@@ -26,8 +26,8 @@ const federatedAggregation = require('./services/federatedAggregationService');
 const routingService = require('./services/routingService'); // Added
 const localBlockchainService = require('./services/localBlockchainService'); // Added for local node chain
 
-app.use('/api/admin/nodes', nodesRouter);
-app.use('/api/admin/transfers', transfersRouter);
+app.use('/api/nodes', nodesRouter);
+app.use('/api/transfers', transfersRouter);
 const simulationState = require('./services/simulationState');
 const datasetLoader = require('./services/simulation/datasetLoader');
 const nodeManager = require('./services/simulation/nodeManager');
@@ -49,55 +49,7 @@ const alerts = [];           // attack alerts list
 let maliciousMode = false;
 
 // ─── Dynamic Node Management ────────────────────────────────────────────────
-app.post('/api/nodes', async (req, res) => {
-  try {
-    const { 
-      nodeId, type, senderAddress, receiverAddress, trustScore,
-      rfFingerprint, csiBehavior, snr
-    } = req.body;
-    
-    // 1. Initialize Physical Layer Profile (Correcting sequence: Initialize -> Complete -> Create)
-    physicalAuth.initializeNodeProfile(nodeId, { rfFingerprint, csiBehavior, snr });
-
-    // 2. Create in NodeService (DB/Memory + Blockchain registration)
-    const node = await require('./services/nodeService').createNode({
-      nodeId, type, senderAddress, receiverAddress, 
-      trustScore: trustScore / 100,
-      rfFingerprint, csiBehavior, snr,
-      status: 'Healthy'
-    });
-
-    // 2. Refresh local state
-    await simulationState.syncNodesFromDB();
-
-    // 3. Record on Chain
-    ledgerService.recordEvent(nodeId, trustScore, 'Node Initialized');
-
-    res.status(201).json({ success: true, node });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.delete('/api/nodes/:addr', async (req, res) => {
-  try {
-    const { addr } = req.params;
-    
-    // 1. Update in NodeService
-    await require('./services/nodeService').removeNode(addr);
-
-    // 2. Update Simulator Local State
-    activeAttacks[addr] = 'Removed';
-    trustScores[addr] = 0;
-
-    // 3. Record on Chain
-    ledgerService.recordEvent(addr, 0, 'Node Removed from Network');
-
-    res.json({ success: true, message: `Node ${addr} removed.` });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
+// Manual dynamic node management removed in favor of nodesRouter
 
 const nodeMetricsHistory = {}; // { [nodeAddress]: list of metrics }
 const activePackets = []; // Added
@@ -667,27 +619,7 @@ app.post('/api/verify-physical-identity', (req, res) => {
   res.json(result);
 });
 
-app.get('/api/nodes', (req, res) => {
-  const nodesWithScores = MOCK_NODES.map(node => {
-     const score = trustScores[node.address] ?? 85;
-     return {
-       ...node,
-       trustScore: score,
-       status: score >= 70 ? 'healthy' : score >= 40 ? 'suspicious' : 'malicious'
-     };
-  });
-  res.json({ nodes: nodesWithScores });
-});
-
-app.get('/api/trust-scores/history', (req, res) => {
-  res.json(simulationState.getTrustHistory());
-});
-
-app.get('/api/trust/:nodeAddr', (req, res) => {
-  const { nodeAddr } = req.params;
-  const score = trustScores[nodeAddr] ?? 85;
-  res.json({ trustScore: score, predictedNextScore: Math.min(100, score + (Math.random() * 6 - 1)) });
-});
+// Redundant REST handlers removed. Now handled by nodesRouter.
 
 app.get('/api/attacks', (req, res) => {
   const { severity, type, limit = 50 } = req.query;
@@ -695,10 +627,6 @@ app.get('/api/attacks', (req, res) => {
   if (severity) result = result.filter(a => a.severity === severity);
   if (type)     result = result.filter(a => a.type === type);
   res.json(result.slice(0, Number(limit)));
-});
-
-app.get('/api/blockchain', (req, res) => {
-  res.json(ledgerService.getBlockchain());
 });
 
 app.get('/api/transactions', (req, res) => {
@@ -709,71 +637,8 @@ app.get('/api/transactions', (req, res) => {
   res.json(result.slice(0, Number(limit)));
 });
 
-app.get('/api/trust-scores', (req, res) => {
-  const result = MOCK_NODES.map((node, i) => {
-    const rawScore = trustScores[node.address] ?? 85;  // stored as 0-100
-    const normalized = rawScore / 100;
-    const status = normalized > 0.7 ? 'trusted' : normalized >= 0.4 ? 'suspicious' : 'malicious';
-    return {
-      nodeId: `${node.address.slice(0, 6)}…${node.address.slice(-4)}`,
-      address: node.address,
-      trustScore: parseFloat(normalized.toFixed(3)),
-      role: node.role,
-      status,
-    };
-  });
-  res.json(result);
-});
-
 app.get('/api/health', (req, res) => {
   res.json({ status: 'healthy', simulator: 'running', maliciousMode });
-});
-
-// ─── Admin Node Actions ────────────────────────────────────────────────────────
-// GET single node detail
-app.get('/api/nodes/:addr', (req, res) => {
-  const { addr } = req.params;
-  const node = MOCK_NODES.find(n => n.address === addr);
-  if (!node) return res.status(404).json({ error: 'Node not found' });
-  const score = trustScores[addr] ?? 85;
-  const status = score >= 70 ? 'trusted' : score >= 40 ? 'suspicious' : 'malicious';
-  res.json({ ...node, trustScore: score, status });
-});
-
-// POST: Isolate a node (set trust score to 0, mine block)
-app.post('/api/nodes/:addr/isolate', (req, res) => {
-  const { addr } = req.params;
-  if (!MOCK_NODES.find(n => n.address === addr)) return res.status(404).json({ error: 'Node not found' });
-  trustScores[addr] = 0;
-  ledgerService.recordEvent(addr, 0, 'Node Isolated');
-  io.emit('trust_update', { node: addr, trustScore: 0, isMaliciousMode: maliciousMode });
-  io.emit('node_action', { addr, action: 'isolated', trustScore: 0, timestamp: Date.now() });
-  res.json({ success: true, addr, action: 'isolated', trustScore: 0 });
-});
-
-// POST: Restore a node (reset trust to 80, mine block)
-app.post('/api/nodes/:addr/restore', (req, res) => {
-  const { addr } = req.params;
-  if (!MOCK_NODES.find(n => n.address === addr)) return res.status(404).json({ error: 'Node not found' });
-  trustScores[addr] = 80;
-  ledgerService.recordEvent(addr, 80, 'Node Recovered', 'Healthy');
-  io.emit('trust_update', { node: addr, trustScore: 80, isMaliciousMode: maliciousMode });
-  io.emit('node_action', { addr, action: 'restored', trustScore: 80, timestamp: Date.now() });
-  res.json({ success: true, addr, action: 'restored', trustScore: 80 });
-});
-
-// POST: Update trust score manually
-app.post('/api/nodes/:addr/trust', (req, res) => {
-  const { addr } = req.params;
-  const { score } = req.body;
-  if (!MOCK_NODES.find(n => n.address === addr)) return res.status(404).json({ error: 'Node not found' });
-  const clamped = Math.max(0, Math.min(100, Number(score)));
-  if (isNaN(clamped)) return res.status(400).json({ error: 'Invalid score' });
-  trustScores[addr] = clamped;
-  ledgerService.recordEvent(addr, clamped, 'Trust Score Updated');
-  io.emit('trust_update', { node: addr, trustScore: clamped, isMaliciousMode: maliciousMode });
-  io.emit('node_action', { addr, action: 'trust_updated', trustScore: clamped, timestamp: Date.now() });
-  res.json({ success: true, addr, action: 'trust_updated', trustScore: clamped });
 });
 
 app.post('/api/simulator/attack', (req, res) => {

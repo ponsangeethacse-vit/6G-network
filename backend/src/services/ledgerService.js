@@ -29,6 +29,7 @@ class LedgerService {
             nodeId: nodeAddr,
             nodeLabel,
             action,
+            attackType, // Store the attack type in the transaction
             txHash,
             blockHash,
             timestamp,
@@ -55,9 +56,10 @@ class LedgerService {
         // 3. Sync with REAL Blockchain (Hardhat/Ethers) if available
         try {
             // We only log to real blockchain for significant events or periodic updates to avoid spam
-            const isSignificant = action !== 'Trust Score Updated' || Math.random() < 0.1;
+            // Any attack is considered significant
+            const isSignificant = action !== 'Trust Score Updated' || attackType !== 'Normal' || Math.random() < 0.1;
             if (isSignificant) {
-                await blockchainConnector.updateTrustScore(nodeAddr, score / 100, action === 'Trust Score Updated' ? attackType : action);
+                await blockchainConnector.updateTrustScore(nodeAddr, score / 100, attackType !== 'Normal' ? attackType : action);
             }
         } catch (err) {
             console.warn(`[LedgerService] REAL Blockchain sync failed for ${nodeAddr}:`, err.message);

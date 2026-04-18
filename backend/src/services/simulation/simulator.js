@@ -17,7 +17,7 @@ class Simulator {
         // --- STEP 7: REMOVE STATIC BEHAVIOR (Configuration Constants) ---
         this.ISOLATION_THRESHOLD = 60;
         this.RECOVERY_RATE = 0.8;          // Slow recovery
-        this.MALICIOUS_CHANCE = 0.15;      // ~15% chance per node per cycle to start an attack
+        this.MALICIOUS_CHANCE = 0.25;      // ~25% chance per node per cycle to start an attack
         this.ATTACK_STAY_CHANCE = 0.70;    // 70% chance to continue attack next cycle
     }
 
@@ -67,9 +67,9 @@ class Simulator {
                     activeAttacks[node.nodeId] = 'Healthy';
                 }
             } else {
-                // --- STEP 1: Implement ~20% (configured as 15% for stability) chance to become malicious ---
+                // --- STEP 1: Implement ~25% chance to become malicious ---
                 if (Math.random() < this.MALICIOUS_CHANCE) {
-                    const types = ['DDoS Attack', 'Port Scan', 'Infiltration', 'Botnet'];
+                    const types = ['DDoS Attack', 'Sybil Attack', 'Poison Attack'];
                     activeAttacks[node.nodeId] = types[Math.floor(Math.random() * types.length)];
                 } else {
                     activeAttacks[node.nodeId] = 'Healthy';
@@ -149,10 +149,17 @@ class Simulator {
         const globalScores = simulationState.getTrustScores();
         globalScores[node.nodeId] = newTrust;
 
-        // --- STEP 5: IMPLEMENT NODE ISOLATION (Detection) ---
-        if (newTrust < this.ISOLATION_THRESHOLD) {
+        // --- STEP 5: IMPLEMENT NODE ISOLATION & STATUS (Detection) ---
+        // Status mapping: Healthy > 80, Suspicious 60-80, Malicious 30-60, Isolated < 30
+        if (newTrust < 30) {
             node.status = 'Isolated';
             simulationState.getActiveAttacks()[node.nodeId] = 'Isolated';
+        } else if (newTrust < 60) {
+            node.status = 'Malicious';
+        } else if (newTrust < 80) {
+            node.status = 'Suspicious';
+        } else {
+            node.status = 'Healthy';
         }
 
         // Periodically persist state to JSON fallback
@@ -188,8 +195,15 @@ class Simulator {
         }
 
         // Blockchain recording for transparency
-        if (Math.abs(newTrust - oldTrust) > 5 || node.status === 'Isolated') {
-            await ledgerService.recordEvent(node.nodeId, newTrust, node.status === 'Isolated' ? 'Node Isolated' : 'Dynamic Trust Update', currentAttack);
+        // LOG EVERY ATTACK or isolation event
+        const isAttack = currentAttack && currentAttack !== 'Healthy';
+        const significantChange = Math.abs(newTrust - oldTrust) > 8;
+        
+        if (isAttack || node.status === 'Isolated' || significantChange) {
+            const action = node.status === 'Isolated' ? 'Node Isolated' : 
+                          (isAttack ? `Network Threat Logged: ${currentAttack}` : 'Trust Dynamic Update');
+            
+            await ledgerService.recordEvent(node.nodeId, newTrust, action, currentAttack || 'Normal');
         }
 
         await this.persistResults(node, metrics, aiResponse, newTrust);

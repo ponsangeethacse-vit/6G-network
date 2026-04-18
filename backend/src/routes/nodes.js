@@ -3,6 +3,7 @@ const router = express.Router();
 const Node = require('../models/Node');
 const nodeService = require('../services/nodeService');
 const simulationState = require('../services/simulationState');
+const ledgerService = require('../services/ledgerService');
 
 // Get all nodes from DB
 router.get('/', async (req, res) => {
@@ -53,6 +54,41 @@ router.get('/:nodeId/activity', async (req, res) => {
      res.json(activity);
   } catch (err) {
      res.status(404).json({ message: err.message });
+  }
+});
+
+// Restore node to healthy state (Resolve attack)
+router.post('/:nodeId/restore', async (req, res) => {
+  try {
+    const { nodeId } = req.params;
+    
+    // 1. Update Database
+    const node = await Node.findOneAndUpdate(
+      { nodeId: nodeId },
+      { 
+        $set: { 
+          status: 'Healthy',
+          trustScore: 1.0
+        } 
+      },
+      { new: true }
+    );
+
+    if (!node) return res.status(404).json({ message: "Node not found" });
+
+    // 2. Update Live Simulation State
+    const trustScores = simulationState.getTrustScores();
+    const activeAttacks = simulationState.getActiveAttacks();
+    
+    trustScores[nodeId] = 100;
+    activeAttacks[nodeId] = 'Healthy';
+
+    // 3. Record in Ledger
+    await ledgerService.recordEvent(nodeId, 100, 'Node Restored', 'Normal');
+
+    res.json({ message: "Node restored to healthy state", node });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 
