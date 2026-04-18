@@ -14,11 +14,12 @@ class Simulator {
         this.isRunning = false;
         this.io = null;
         
-        // --- STEP 7: REMOVE STATIC BEHAVIOR (Configuration Constants) ---
-        this.ISOLATION_THRESHOLD = 60;
-        this.RECOVERY_RATE = 0.8;          // Slow recovery
-        this.MALICIOUS_CHANCE = 0.25;      // ~25% chance per node per cycle to start an attack
-        this.ATTACK_STAY_CHANCE = 0.70;    // 70% chance to continue attack next cycle
+        // Calibrated for realistic 6G simulation:
+        // ~8% of nodes may come under attack per cycle; most recover within 30-60s
+        this.ISOLATION_THRESHOLD = 20;     // Only truly compromised nodes get isolated
+        this.RECOVERY_RATE      = 3.0;     // Recover 3 points/tick when healthy (was 0.8)
+        this.MALICIOUS_CHANCE   = 0.08;    // 8% chance per node per cycle to start an attack (was 25%)
+        this.ATTACK_STAY_CHANCE = 0.50;    // 50% chance to continue attack (was 70%)  
     }
 
     /**
@@ -91,10 +92,18 @@ class Simulator {
      * Core processing for each node.
      */
     async processNode(node) {
-        // --- STEP 5: IMPLEMENT NODE ISOLATION (Prevention) ---
+        // Isolated nodes slowly self-recover at 1/4 normal rate
         if (node.status === 'Isolated') {
-            const blockedMetrics = { packet_rate: 0, latency: 999, bandwidth: 0, failed_requests: 0 };
-            return await this.persistResults(node, blockedMetrics, { overall_classification: 'Blocked' }, node.trustScore);
+            const globalScores = simulationState.getTrustScores();
+            const current = globalScores[node.nodeId] ?? 0;
+            const recovered = Math.min(100, current + (this.RECOVERY_RATE * 0.25));
+            globalScores[node.nodeId] = recovered;
+            node.trustScore = recovered;
+            if (recovered >= this.ISOLATION_THRESHOLD) {
+                node.status = 'Malicious'; // Graduate back to malicious before healthy
+                simulationState.getActiveAttacks()[node.nodeId] = 'Healthy';
+            }
+            return; // Still skip full processing
         }
 
         // 1. Fetch from Dataset
@@ -129,15 +138,17 @@ class Simulator {
         );
 
         // --- STEP 2: FIX TRUST SCORE UPDATE ---
+        // Penalty: gradual degradation (5–12 pts) rather than cliff-drop (20–47 pts)
+        // Recovery: 3 pts/tick when healthy so nodes bounce back within ~30s
         let oldTrust = node.trustScore;
         let newTrust = oldTrust;
 
         if (anomalyScore > 0.45 || aiResponse.overall_classification !== 'Normal') {
-            // If anomaly detected → decrease trust significantly
-            const penalty = 20 + (anomalyScore * 30); 
+            // Penalty scales with anomaly severity but stays moderate
+            const penalty = 5 + (anomalyScore * 7); // max ~12 pts per tick
             newTrust = Math.max(0, oldTrust - penalty);
         } else {
-            // If normal → increase trust slightly (Slow recovery)
+            // Healthy → recover toward 100
             newTrust = Math.min(100, oldTrust + this.RECOVERY_RATE);
         }
 
@@ -149,9 +160,8 @@ class Simulator {
         const globalScores = simulationState.getTrustScores();
         globalScores[node.nodeId] = newTrust;
 
-        // --- STEP 5: IMPLEMENT NODE ISOLATION & STATUS (Detection) ---
-        // Status mapping: Healthy > 80, Suspicious 60-80, Malicious 30-60, Isolated < 30
-        if (newTrust < 30) {
+        // Status mapping: Healthy > 80, Suspicious 60-80, Malicious 20-60, Isolated < 20
+        if (newTrust < this.ISOLATION_THRESHOLD) {
             node.status = 'Isolated';
             simulationState.getActiveAttacks()[node.nodeId] = 'Isolated';
         } else if (newTrust < 60) {
