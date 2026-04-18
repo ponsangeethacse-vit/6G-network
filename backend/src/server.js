@@ -679,6 +679,10 @@ app.get('/api/nodes', (req, res) => {
   res.json({ nodes: nodesWithScores });
 });
 
+app.get('/api/trust-scores/history', (req, res) => {
+  res.json(simulationState.getTrustHistory());
+});
+
 app.get('/api/trust/:nodeAddr', (req, res) => {
   const { nodeAddr } = req.params;
   const score = trustScores[nodeAddr] ?? 85;

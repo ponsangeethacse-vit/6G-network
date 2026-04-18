@@ -102,12 +102,20 @@ const TrustScoreVisualizationPage = () => {
   const historyRef = useRef<HistoryPoint[]>([]);
 
   // ── Fetch /api/trust-scores ──────────────────────────────────────────────
-  const fetchScores = useCallback(async () => {
+  const fetchScores = useCallback(async (isInitial = false) => {
     try {
-      const raw = await TrustService.getTrustScores();
+      // If initial load, hydrate history from backend
+      if (isInitial) {
+        const hist = await TrustService.getHistory();
+        if (hist && hist.length > 0) {
+          historyRef.current = hist;
+          setHistory(hist);
+        }
+      }
 
-      const fetched: TrustNode[] = raw.map(n => ({
-        nodeId: n.address ?? `Node-${Math.random().toString(36).slice(2,6)}`,
+      const raw = await TrustService.getTrustScores();
+      const fetched: TrustNode[] = raw.map((n: any, i: number) => ({
+        nodeId: n.address || n.nodeId || `node-${i}`,
         trustScore: typeof n.trustScore === 'number'
           ? (n.trustScore > 1 ? n.trustScore / 100 : n.trustScore)
           : 0.85,
@@ -118,17 +126,22 @@ const TrustScoreVisualizationPage = () => {
 
       setNodes(fetched);
 
-      // Track history (keep last 15 ticks)
+      // Track history (keep last 30 ticks)
       const point: HistoryPoint = {
         timestamp: Date.now(),
         scores: Object.fromEntries(fetched.map(n => [n.nodeId, n.trustScore])),
       };
-      historyRef.current = [...historyRef.current.slice(-14), point];
-      setHistory([...historyRef.current]);
+      
+      // Avoid duplicate timestamps if polling is fast
+      const lastPoint = historyRef.current[historyRef.current.length - 1];
+      if (!lastPoint || (point.timestamp - lastPoint.timestamp > 1000)) {
+         historyRef.current = [...historyRef.current.slice(-29), point];
+         setHistory([...historyRef.current]);
+      }
 
       setLastUpdated(new Date());
     } catch {
-      // Fallback: generate plausible mock data from /api/nodes
+      // Fallback: generate plausible mock data
       try {
         const data = await NodeService.getNodes();
         const rawNodes = data.nodes ?? data ?? [];
@@ -136,9 +149,9 @@ const TrustScoreVisualizationPage = () => {
         const fetched: TrustNode[] = rawNodes.map((n: any, i: number) => {
           const score = n.trustScore != null
             ? (n.trustScore > 1 ? n.trustScore / 100 : n.trustScore)
-            : 0.65 + Math.random() * 0.35;
+            : 0.85;
           return {
-            nodeId: n.address ? `${n.address.slice(0, 6)}…${n.address.slice(-4)}` : `Node-${i + 1}`,
+            nodeId: n.address ? n.address : `Node-${i + 1}`,
             trustScore: parseFloat(score.toFixed(3)),
             status: classify(score),
           };
@@ -150,7 +163,7 @@ const TrustScoreVisualizationPage = () => {
           timestamp: Date.now(),
           scores: Object.fromEntries(fetched.map(n => [n.nodeId, n.trustScore])),
         };
-        historyRef.current = [...historyRef.current.slice(-14), point];
+        historyRef.current = [...historyRef.current.slice(-29), point];
         setHistory([...historyRef.current]);
 
         setLastUpdated(new Date());
@@ -163,8 +176,8 @@ const TrustScoreVisualizationPage = () => {
   }, []);
 
   useEffect(() => {
-    fetchScores();
-    const iv = setInterval(fetchScores, 4000);
+    fetchScores(true); // Initial hydration
+    const iv = setInterval(() => fetchScores(false), 4000);
     return () => clearInterval(iv);
   }, [fetchScores]);
 
@@ -186,23 +199,56 @@ const TrustScoreVisualizationPage = () => {
     }],
   };
 
-  // ── Line chart data ──────────────────────────────────────────────────────
-  const nodeIds = nodes.map(n => n.nodeId);
   const timeLabels = history.map(h => new Date(h.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
 
-  const lineData = {
-    labels: timeLabels,
-    datasets: nodeIds.map((id, i) => ({
-      label: formatAddress(id),
-      data: history.map(h => h.scores[id] ?? null),
-      borderColor: LINE_COLORS[i % LINE_COLORS.length].border,
-      backgroundColor: LINE_COLORS[i % LINE_COLORS.length].bg,
-      fill: false,
-      tension: 0.4,
-      pointRadius: 3,
-      borderWidth: 2,
-    })),
+  // ── Line chart data (Simplified: Show Top 5 lowest + Average) ──────────────
+  const getLineData = () => {
+    // 1. Calculate Network Average (safety: skip if no scores to avoid 0 drops)
+    const avgData = history.map(h => {
+      const vals = Object.values(h.scores);
+      if (vals.length === 0) return null;
+      return vals.reduce((a, b) => a + b, 0) / vals.length;
+    });
+
+    // 2. Find top 5 nodes with lowest trust (currently)
+    const criticalNodeIds = [...nodes]
+      .sort((a, b) => a.trustScore - b.trustScore)
+      .slice(0, 5)
+      .map(n => n.nodeId);
+
+    const datasets = [
+      // Average Line
+      {
+        label: 'Network Average',
+        data: avgData,
+        borderColor: 'rgba(255, 255, 255, 0.6)',
+        backgroundColor: 'transparent',
+        borderWidth: 3,
+        borderDash: [5, 5],
+        pointRadius: 0,
+        tension: 0.4,
+        fill: false,
+        zIndex: 10,
+        spanGaps: true
+      },
+      // Individual Critical Nodes
+      ...criticalNodeIds.map((id, i) => ({
+        label: `Node ${id.slice(-4).toUpperCase()}`,
+        data: history.map(h => h.scores[id] ?? null),
+        borderColor: LINE_COLORS[i % LINE_COLORS.length].border,
+        backgroundColor: LINE_COLORS[i % LINE_COLORS.length].bg,
+        fill: false,
+        tension: 0.4,
+        pointRadius: 2,
+        borderWidth: 2,
+        spanGaps: true
+      }))
+    ];
+
+    return { labels: timeLabels, datasets };
   };
+
+  const lineData = getLineData();
 
   // ── Summary counts ───────────────────────────────────────────────────────
   const trusted    = nodes.filter(n => n.status === 'trusted').length;

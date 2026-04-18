@@ -4,11 +4,12 @@ const path = require('path');
 const MOCK_NODES = [];
 const trustScores = {};
 const activeAttacks = {};
+const trustHistory = []; // Buffer for time-series data
 const STATE_FILE = path.join(__dirname, '../../simulation_state.json');
 
 function saveState() {
   try {
-    const data = JSON.stringify({ trustScores, activeAttacks }, null, 2);
+    const data = JSON.stringify({ trustScores, activeAttacks, trustHistory }, null, 2);
     fs.writeFileSync(STATE_FILE, data);
   } catch (err) {
     console.warn('[SimulationState] Could not save state:', err.message);
@@ -21,11 +22,23 @@ function loadState() {
       const data = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
       Object.assign(trustScores, data.trustScores || {});
       Object.assign(activeAttacks, data.activeAttacks || {});
-      console.log(`[SimulationState] 💾 Loaded persisted state from ${STATE_FILE}`);
+      if (data.trustHistory) {
+         trustHistory.splice(0, trustHistory.length, ...data.trustHistory);
+      }
+      console.log(`[SimulationState] 💾 Loaded persisted state + ${trustHistory.length} history points.`);
     }
   } catch (err) {
     console.warn('[SimulationState] Could not load state:', err.message);
   }
+}
+
+function captureSnapshot() {
+  const snapshot = {
+    timestamp: Date.now(),
+    scores: { ...trustScores }
+  };
+  trustHistory.push(snapshot);
+  if (trustHistory.length > 50) trustHistory.shift();
 }
 
 async function syncNodesFromDB() {
@@ -72,7 +85,9 @@ module.exports = {
   getNodes: () => MOCK_NODES,
   getTrustScores: () => trustScores,
   getActiveAttacks: () => activeAttacks,
+  getTrustHistory: () => trustHistory,
   syncNodesFromDB,
   saveState,
-  loadState
+  loadState,
+  captureSnapshot
 };

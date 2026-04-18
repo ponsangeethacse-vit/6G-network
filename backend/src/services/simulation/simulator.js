@@ -80,6 +80,8 @@ class Simulator {
         console.log(`[Simulator] ⏱️ Tick: Processing ${nodes.length} nodes with dynamic attack patterns.`);
         try {
             await Promise.all(nodes.map(node => this.processNode(node)));
+            // Store snapshot for history analytics
+            simulationState.captureSnapshot();
         } catch (err) {
             console.error(`[Simulator] Error: ${err.message}`);
         }

@@ -117,9 +117,13 @@ export const TrustService = {
     try {
       const resp = await api.get('/trust-scores');
       return resp.data;
-    } catch (error) {
-      throw handleApiError(error);
-    }
+    } catch { return []; }
+  },
+  getHistory: async (): Promise<any[]> => {
+    try {
+      const resp = await api.get('/trust-scores/history');
+      return resp.data;
+    } catch { return []; }
   },
 };
 
