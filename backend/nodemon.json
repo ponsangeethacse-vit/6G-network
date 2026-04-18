@@ -1,0 +1,10 @@
+{
+  "ignore": [
+    "simulation_state.json",
+    "error.txt",
+    "verify_output*.log",
+    "*.test.js",
+    "test/*"
+  ],
+  "delay": "1000"
+}

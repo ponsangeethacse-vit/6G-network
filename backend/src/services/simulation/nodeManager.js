@@ -1,7 +1,7 @@
 class NodeManager {
     constructor() {
         this.nodes = [];
-        this.TOTAL_NODES = 75; // Configurable between 50-100
+        this.TOTAL_NODES = 30; // Configurable between 50-100
         
         // Distribution ratios: 60% IoT, 20% Edge, 10% Base Station, 10% Malicious
         this.ratios = {
