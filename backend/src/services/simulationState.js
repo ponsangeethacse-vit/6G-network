@@ -1,29 +1,35 @@
-const Node = require('../models/Node');
+const fs = require('fs');
+const path = require('path');
 
 const MOCK_NODES = [];
 const trustScores = {};
 const activeAttacks = {};
+const STATE_FILE = path.join(__dirname, '../../simulation_state.json');
 
-function generateDefaultNodes() {
-  return Array.from({ length: 20 }, (_, i) => {
-    const hex = (i + 1).toString(16).padStart(40, '0');
-    let role = 1; 
-    if (i >= 14 && i < 17) role = 2;
-    else if (i >= 17 && i < 19) role = 3;
+function saveState() {
+  try {
+    const data = JSON.stringify({ trustScores, activeAttacks }, null, 2);
+    fs.writeFileSync(STATE_FILE, data);
+  } catch (err) {
+    console.warn('[SimulationState] Could not save state:', err.message);
+  }
+}
 
-    let type = 'IoT Device';
-    if (role === 2) type = 'Base Station';
-    else if (role === 3) type = 'Edge Node';
-
-    let profile = 'Healthy';
-    if (i < 2) profile = 'Malicious';
-    else if (i < 6) profile = 'Suspicious';
-
-    return { address: `0x${hex}`, type, role, profile };
-  });
+function loadState() {
+  try {
+    if (fs.existsSync(STATE_FILE)) {
+      const data = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+      Object.assign(trustScores, data.trustScores || {});
+      Object.assign(activeAttacks, data.activeAttacks || {});
+      console.log(`[SimulationState] 💾 Loaded persisted state from ${STATE_FILE}`);
+    }
+  } catch (err) {
+    console.warn('[SimulationState] Could not load state:', err.message);
+  }
 }
 
 async function syncNodesFromDB() {
+  loadState();
   try {
     const nodeService = require('./nodeService');
     const dbNodes = await nodeService.getNodes();
@@ -33,29 +39,12 @@ async function syncNodesFromDB() {
       console.log('[SimulationState] No database nodes found, importing from scalable NodeManager...');
       const nodeManager = require('./simulation/nodeManager');
       const simNodes = nodeManager.getAllNodes();
-      nodesFetched = simNodes.map(n => {
-          let role = 4;
-          if (n.type === 'iot') role = 1;
-          else if (n.type === 'base_station') role = 2;
-          else if (n.type === 'edge') role = 3;
-          
-          return {
-              address: n.nodeId,
-              type: n.type,
-              role: role,
-              profile: n.type === 'malicious' ? 'Malicious' : 'Healthy'
-          };
-      });
-      // Optional: Seed the defaults back into nodeService so they persist in memory/DB
-      for (const n of nodesFetched) {
-        // We don't await here to avoid potential recursion or slow start
-        nodeService.createNode({
-          nodeId: n.address,
+      nodesFetched = simNodes.map(n => ({
+          address: n.nodeId,
           type: n.type,
-          status: n.profile === 'Malicious' ? 'Malicious' : (n.profile === 'Suspicious' ? 'Suspicious' : 'Active'),
-          trustScore: 0.85
-        }).catch(() => {});
-      }
+          role: n.type === 'iot' ? 1 : (n.type === 'base_station' ? 2 : 3),
+          profile: 'Healthy'
+      }));
     } else {
       nodesFetched = dbNodes.map(dn => ({
         address: dn.nodeId || dn.address,
@@ -63,10 +52,8 @@ async function syncNodesFromDB() {
         role: dn.role || (dn.type === 'Base Station' ? 2 : (dn.type === 'Edge Node' ? 3 : 1)),
         profile: dn.status === 'Malicious' ? 'Malicious' : (dn.status === 'Suspicious' ? 'Suspicious' : 'Healthy')
       }));
-      console.log(`[SimulationState] 🔄 Loaded ${nodesFetched.length} nodes for simulation.`);
     }
 
-    // Update state in place
     MOCK_NODES.splice(0, MOCK_NODES.length, ...nodesFetched);
 
     MOCK_NODES.forEach(n => {
@@ -86,5 +73,6 @@ module.exports = {
   getTrustScores: () => trustScores,
   getActiveAttacks: () => activeAttacks,
   syncNodesFromDB,
-  generateDefaultNodes
+  saveState,
+  loadState
 };

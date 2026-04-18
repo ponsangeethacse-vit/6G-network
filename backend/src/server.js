@@ -5,6 +5,7 @@ const cors = require('cors');
 const { Server } = require('socket.io');
 const Node = require('./models/Node');
 const nodeService = require('./services/nodeService');
+const ledgerService = require('./services/ledgerService');
 
 // ─── App & Server ──────────────────────────────────────────────────────────────
 const app = express();
@@ -12,6 +13,7 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] }
 });
+ledgerService.setIo(io);
 
 app.use(cors());
 app.use(express.json());
@@ -44,56 +46,7 @@ MOCK_NODES.forEach(n => {
 
 // Initial trust scores populated by simulationState.syncNodesFromDB()
 const alerts = [];           // attack alerts list
-const blockchainBlocks = []; // simulated blockchain blocks
 let maliciousMode = false;
-let blockIndex = 1;
-
-// Transaction log — separate from blocks, for the TX viewer table
-const txLog = [];   // rich transaction records
-let txSeq = 1;
-
-const ACTIONS = ['Trust Score Updated', 'Attack Detected', 'Node Isolated', 'Node Recovered'];
-
-function generateHash(len = 64) {
-  return '0x' + [...Array(len)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
-}
-
-function mineBlock(nodeAddr, score, action) {
-  const prev = blockchainBlocks.length > 0
-    ? blockchainBlocks[blockchainBlocks.length - 1].hash
-    : '0x0000000000000000000000000000000000000000000000000000000000000000';
-
-  const blockHash = generateHash(64);
-  const txHash    = generateHash(64);
-  const nodeLabel = `Node ${nodeAddr.slice(2,6).toUpperCase()}`;
-  const timestamp = Date.now();
-
-  // Rich transaction record for the log table
-  const tx = {
-    id:        txSeq++,
-    blockId:   blockIndex,
-    nodeId:    nodeAddr,
-    nodeLabel,
-    action:    action || 'Trust Score Updated',
-    txHash,
-    blockHash,
-    timestamp,
-    trustScore: score,
-  };
-  txLog.unshift(tx);
-  if (txLog.length > 100) txLog.pop();
-
-  blockchainBlocks.push({
-    index: blockIndex++,
-    hash: blockHash,
-    previousHash: prev,
-    transactions: [tx],
-  });
-  if (blockchainBlocks.length > 20) blockchainBlocks.shift();
-
-  // Broadcast new transaction in real time
-  io.emit('new_transaction', tx);
-}
 
 // ─── Dynamic Node Management ────────────────────────────────────────────────
 app.post('/api/nodes', async (req, res) => {
@@ -118,7 +71,7 @@ app.post('/api/nodes', async (req, res) => {
     await simulationState.syncNodesFromDB();
 
     // 3. Record on Chain
-    mineBlock(nodeId, trustScore, 'Node Initialized');
+    ledgerService.recordEvent(nodeId, trustScore, 'Node Initialized');
 
     res.status(201).json({ success: true, node });
   } catch (err) {
@@ -138,7 +91,7 @@ app.delete('/api/nodes/:addr', async (req, res) => {
     trustScores[addr] = 0;
 
     // 3. Record on Chain
-    mineBlock(addr, 0, 'Node Removed from Network');
+    ledgerService.recordEvent(addr, 0, 'Node Removed from Network');
 
     res.json({ success: true, message: `Node ${addr} removed.` });
   } catch (err) {
@@ -166,10 +119,14 @@ function scheduleNextPacket() {
 function generateAutoPacket() {
   // Pick distinct random src/dst
   let idx1 = Math.floor(Math.random() * MOCK_NODES.length);
-  while (activeAttacks[MOCK_NODES[idx1].address] === 'Removed') idx1 = Math.floor(Math.random() * MOCK_NODES.length);
+  while (activeAttacks[MOCK_NODES[idx1].address] === 'Removed' || (trustScores[MOCK_NODES[idx1].address] || 0) < 60) {
+    idx1 = Math.floor(Math.random() * MOCK_NODES.length);
+  }
   
   let idx2 = Math.floor(Math.random() * MOCK_NODES.length);
-  while (idx2 === idx1 || activeAttacks[MOCK_NODES[idx2].address] === 'Removed') idx2 = Math.floor(Math.random() * MOCK_NODES.length);
+  while (idx2 === idx1 || activeAttacks[MOCK_NODES[idx2].address] === 'Removed' || (trustScores[MOCK_NODES[idx2].address] || 0) < 60) {
+    idx2 = Math.floor(Math.random() * MOCK_NODES.length);
+  }
   
   const src = MOCK_NODES[idx1].address;
   const dst = MOCK_NODES[idx2].address;
@@ -446,7 +403,7 @@ async function runSimulatorTick() {
     }
 
     if (shouldMine) {
-      mineBlock(node.address, finalScore, action);
+      await ledgerService.recordEvent(node.address, finalScore, action, activeAttack);
     }
 
     // 🤝 Submit for Federated Aggregation if trust >= threshold
@@ -711,7 +668,15 @@ app.post('/api/verify-physical-identity', (req, res) => {
 });
 
 app.get('/api/nodes', (req, res) => {
-  res.json({ nodes: MOCK_NODES });
+  const nodesWithScores = MOCK_NODES.map(node => {
+     const score = trustScores[node.address] ?? 85;
+     return {
+       ...node,
+       trustScore: score,
+       status: score >= 70 ? 'healthy' : score >= 40 ? 'suspicious' : 'malicious'
+     };
+  });
+  res.json({ nodes: nodesWithScores });
 });
 
 app.get('/api/trust/:nodeAddr', (req, res) => {
@@ -729,12 +694,12 @@ app.get('/api/attacks', (req, res) => {
 });
 
 app.get('/api/blockchain', (req, res) => {
-  res.json(blockchainBlocks);
+  res.json(ledgerService.getBlockchain());
 });
 
 app.get('/api/transactions', (req, res) => {
   const { action, nodeId, limit = 100 } = req.query;
-  let result = [...txLog];
+  let result = ledgerService.getTxLog();
   if (action) result = result.filter(t => t.action === action);
   if (nodeId) result = result.filter(t => t.nodeId === nodeId);
   res.json(result.slice(0, Number(limit)));
@@ -776,7 +741,7 @@ app.post('/api/nodes/:addr/isolate', (req, res) => {
   const { addr } = req.params;
   if (!MOCK_NODES.find(n => n.address === addr)) return res.status(404).json({ error: 'Node not found' });
   trustScores[addr] = 0;
-  mineBlock(addr, 0, 'Node Isolated');
+  ledgerService.recordEvent(addr, 0, 'Node Isolated');
   io.emit('trust_update', { node: addr, trustScore: 0, isMaliciousMode: maliciousMode });
   io.emit('node_action', { addr, action: 'isolated', trustScore: 0, timestamp: Date.now() });
   res.json({ success: true, addr, action: 'isolated', trustScore: 0 });
@@ -787,7 +752,7 @@ app.post('/api/nodes/:addr/restore', (req, res) => {
   const { addr } = req.params;
   if (!MOCK_NODES.find(n => n.address === addr)) return res.status(404).json({ error: 'Node not found' });
   trustScores[addr] = 80;
-  mineBlock(addr, 80, 'Node Recovered');
+  ledgerService.recordEvent(addr, 80, 'Node Recovered', 'Healthy');
   io.emit('trust_update', { node: addr, trustScore: 80, isMaliciousMode: maliciousMode });
   io.emit('node_action', { addr, action: 'restored', trustScore: 80, timestamp: Date.now() });
   res.json({ success: true, addr, action: 'restored', trustScore: 80 });
@@ -801,7 +766,7 @@ app.post('/api/nodes/:addr/trust', (req, res) => {
   const clamped = Math.max(0, Math.min(100, Number(score)));
   if (isNaN(clamped)) return res.status(400).json({ error: 'Invalid score' });
   trustScores[addr] = clamped;
-  mineBlock(addr, clamped, 'Trust Score Updated');
+  ledgerService.recordEvent(addr, clamped, 'Trust Score Updated');
   io.emit('trust_update', { node: addr, trustScore: clamped, isMaliciousMode: maliciousMode });
   io.emit('node_action', { addr, action: 'trust_updated', trustScore: clamped, timestamp: Date.now() });
   res.json({ success: true, addr, action: 'trust_updated', trustScore: clamped });

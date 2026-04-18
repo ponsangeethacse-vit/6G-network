@@ -12,6 +12,7 @@ const simulationResultSchema = new mongoose.Schema({
     attackType: { type: String, default: 'Normal' },
     autoencoder_score: Number,
     lstm_probability: Number,
+    status: String,
     timestamp: { type: Date, default: Date.now, index: { expires: '1h' } }
 }, { timestamps: true });
 

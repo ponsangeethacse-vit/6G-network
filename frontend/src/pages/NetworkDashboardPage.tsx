@@ -326,8 +326,16 @@ const NetworkDashboardPage = () => {
       ]);
 
       const enriched: NetworkNode[] = nodesData.map((n: any) => {
-        const score = localScores.current[n.address] ?? 85;
-        return { ...n, trustScore: score, status: classify(score) };
+        // Prefer trustScore from backend, fallback to 85 if not provided
+        const score = n.trustScore !== undefined ? n.trustScore : 85;
+        // Sync localScores ref so subsequent socket updates work correctly
+        localScores.current[n.address] = score;
+        return { 
+          ...n, 
+          address: n.address || n.nodeId, 
+          trustScore: score, 
+          status: classify(score) 
+        };
       });
 
       setNodes(enriched);

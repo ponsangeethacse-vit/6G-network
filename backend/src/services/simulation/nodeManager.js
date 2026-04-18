@@ -54,6 +54,7 @@ class NodeManager {
                 nodeId,
                 type,
                 label: this.behaviorProfiles[type].label,
+                status: 'Active',
                 trustScore: 100,
                 datasetIndex: Math.floor(Math.random() * 1000), // Variation in reading start point
                 metrics: {

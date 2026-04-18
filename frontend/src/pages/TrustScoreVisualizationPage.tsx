@@ -144,17 +144,11 @@ const TrustScoreVisualizationPage = () => {
           };
         });
 
-        // Random walk to animate
-        const walked = fetched.map(n => ({
-          ...n,
-          trustScore: parseFloat(Math.min(1, Math.max(0, n.trustScore + (Math.random() * 0.06 - 0.02))).toFixed(3)),
-        })).map(n => ({ ...n, status: classify(n.trustScore) }));
-
-        setNodes(walked);
+        setNodes(fetched);
 
         const point: HistoryPoint = {
           timestamp: Date.now(),
-          scores: Object.fromEntries(walked.map(n => [n.nodeId, n.trustScore])),
+          scores: Object.fromEntries(fetched.map(n => [n.nodeId, n.trustScore])),
         };
         historyRef.current = [...historyRef.current.slice(-14), point];
         setHistory([...historyRef.current]);
@@ -256,74 +250,71 @@ const TrustScoreVisualizationPage = () => {
       </Row>
 
       {/* Charts */}
-      <Row className="g-3 mb-4">
-        {/* Bar Chart */}
-        <Col lg={6}>
-          <Card bg="dark" border="secondary" className="shadow-lg h-100">
-            <Card.Header className="bg-black bg-opacity-25 border-bottom border-secondary p-3 d-flex justify-content-between align-items-center">
-              <h6 className="mb-0 text-secondary text-uppercase" style={{ letterSpacing: '1px', fontSize: '12px' }}>
-                Node vs Trust Score
-              </h6>
-              <ToggleButtonGroup type="radio" name="sort" value={sortBy} onChange={(v: any) => setSortBy(v)}>
-                <ToggleButton id="sort-score" value="score" size="sm" variant="outline-secondary" style={{ fontSize: '10px' }}>
-                  Score
-                </ToggleButton>
-                <ToggleButton id="sort-id" value="id" size="sm" variant="outline-secondary" style={{ fontSize: '10px' }}>
-                  Node ID
-                </ToggleButton>
-              </ToggleButtonGroup>
-            </Card.Header>
-            <Card.Body className="p-3" style={{ height: '300px' }}>
-              {nodes.length > 0
-                ? <Bar data={barData} options={{ ...CHART_DEFAULTS, plugins: { ...CHART_DEFAULTS.plugins, legend: { display: false } } } as any} />
-                : <div className="h-100 d-flex align-items-center justify-content-center text-secondary small">Waiting for data…</div>}
-            </Card.Body>
+      <div className="mb-4">
+        {/* Bar Chart Row */}
+        <Card bg="dark" border="secondary" className="shadow-lg mb-4">
+          <Card.Header className="bg-black bg-opacity-25 border-bottom border-secondary p-3 d-flex justify-content-between align-items-center">
+            <h6 className="mb-0 text-secondary text-uppercase" style={{ letterSpacing: '1px', fontSize: '12px' }}>
+              Node vs Trust Score
+            </h6>
+            <ToggleButtonGroup type="radio" name="sort" value={sortBy} onChange={(v: any) => setSortBy(v)}>
+              <ToggleButton id="sort-score" value="score" size="sm" variant="outline-secondary" style={{ fontSize: '10px' }}>
+                Score
+              </ToggleButton>
+              <ToggleButton id="sort-id" value="id" size="sm" variant="outline-secondary" style={{ fontSize: '10px' }}>
+                Node ID
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Card.Header>
+          <Card.Body className="p-3" style={{ height: '350px' }}>
+            {nodes.length > 0
+              ? <Bar data={barData} options={{ ...CHART_DEFAULTS, plugins: { ...CHART_DEFAULTS.plugins, legend: { display: false } } } as any} />
+              : <div className="h-100 d-flex align-items-center justify-content-center text-secondary small">Waiting for data…</div>}
+          </Card.Body>
 
-            {/* Color Legend */}
-            <Card.Footer className="bg-transparent border-top border-secondary p-2 d-flex gap-3 justify-content-center">
-              {[
-                { color: '#198754', label: 'Trusted (> 70%)' },
-                { color: '#ffc107', label: 'Suspicious (40–70%)' },
-                { color: '#dc3545', label: 'Malicious (< 40%)' },
-              ].map(({ color, label }) => (
-                <div key={label} className="d-flex align-items-center gap-1" style={{ fontSize: '11px' }}>
-                  <div className="rounded-circle" style={{ width: 10, height: 10, backgroundColor: color }} />
-                  <span className="text-secondary">{label}</span>
-                </div>
-              ))}
-            </Card.Footer>
-          </Card>
-        </Col>
+          {/* Color Legend */}
+          <Card.Footer className="bg-transparent border-top border-secondary p-2 d-flex gap-3 justify-content-center">
+            {[
+              { color: '#198754', label: 'Trusted (> 70%)' },
+              { color: '#ffc107', label: 'Suspicious (40–70%)' },
+              { color: '#dc3545', label: 'Malicious (< 40%)' },
+            ].map(({ color, label }) => (
+              <div key={label} className="d-flex align-items-center gap-1" style={{ fontSize: '11px' }}>
+                <div className="rounded-circle" style={{ width: 10, height: 10, backgroundColor: color }} />
+                <span className="text-secondary">{label}</span>
+              </div>
+            ))}
+          </Card.Footer>
+        </Card>
 
-        {/* Line Chart */}
-        <Col lg={6}>
-          <Card bg="dark" border="secondary" className="shadow-lg h-100">
-            <Card.Header className="bg-black bg-opacity-25 border-bottom border-secondary p-3 d-flex justify-content-between align-items-center">
-              <h6 className="mb-0 text-secondary text-uppercase" style={{ letterSpacing: '1px', fontSize: '12px' }}>
-                <TrendingUp size={14} className="me-2" />Trust Score Over Time
-              </h6>
-              <Badge bg="success" className="bg-opacity-25 text-success border border-success border-opacity-25" style={{ fontSize: '10px' }}>LIVE</Badge>
-            </Card.Header>
-            <Card.Body className="p-3" style={{ height: '300px' }}>
-              {history.length > 1
-                ? <Line data={lineData} options={{
-                    ...CHART_DEFAULTS,
-                    plugins: {
-                      ...CHART_DEFAULTS.plugins,
-                      legend: {
-                        display: true,
-                        labels: { color: '#6c757d', font: { size: 10 }, boxWidth: 12, padding: 10 }
-                      }
+        {/* Line Chart Row */}
+        <Card bg="dark" border="secondary" className="shadow-lg">
+          <Card.Header className="bg-black bg-opacity-25 border-bottom border-secondary p-3 d-flex justify-content-between align-items-center">
+            <h6 className="mb-0 text-secondary text-uppercase" style={{ letterSpacing: '1px', fontSize: '12px' }}>
+              <TrendingUp size={14} className="me-2" />Trust Score Over Time
+            </h6>
+            <Badge bg="success" className="bg-opacity-25 text-success border border-success border-opacity-25" style={{ fontSize: '10px' }}>LIVE</Badge>
+          </Card.Header>
+          <Card.Body className="p-3" style={{ height: '350px' }}>
+            {history.length > 1
+              ? <Line data={lineData} options={{
+                  ...CHART_DEFAULTS,
+                  plugins: {
+                    ...CHART_DEFAULTS.plugins,
+                    legend: {
+                      display: true,
+                      position: 'right',
+                      labels: { color: '#6c757d', font: { size: 10 }, boxWidth: 12, padding: 10 }
                     }
-                  } as any} />
-                : <div className="h-100 d-flex align-items-center justify-content-center text-secondary small">
-                    Collecting history… (need ≥ 2 ticks)
-                  </div>
-              }
-            </Card.Body>
-          </Card>
-        </Col>
-      </Row>
+                  }
+                } as any} />
+              : <div className="h-100 d-flex align-items-center justify-content-center text-secondary small">
+                  Collecting history… (need ≥ 2 ticks)
+                </div>
+            }
+          </Card.Body>
+        </Card>
+      </div>
 
       {/* Node Table */}
       <Card bg="dark" border="secondary" className="shadow-lg">
