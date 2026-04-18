@@ -26,7 +26,8 @@ const federatedAggregation = require('./services/federatedAggregationService');
 const routingService = require('./services/routingService'); // Added
 const localBlockchainService = require('./services/localBlockchainService'); // Added for local node chain
 
-app.use('/api/nodes', nodesRouter);
+// nodesRouter handles DB-backed CRUD — mounted at /api/admin/nodes to avoid shadowing simulation routes
+app.use('/api/admin/nodes', nodesRouter);
 app.use('/api/transfers', transfersRouter);
 const simulationState = require('./services/simulationState');
 const datasetLoader = require('./services/simulation/datasetLoader');
@@ -619,7 +620,123 @@ app.post('/api/verify-physical-identity', (req, res) => {
   res.json(result);
 });
 
-// Redundant REST handlers removed. Now handled by nodesRouter.
+// ─── Simulation-aware Node Routes ─────────────────────────────────────────────
+// These serve live data from the 30-node simulator (not DB), which is what the frontend needs.
+
+// GET /api/nodes — return all live simulator nodes wrapped in { nodes: [] }
+app.get('/api/nodes', (req, res) => {
+  const nodesWithScores = MOCK_NODES.map(node => {
+    const score = trustScores[node.address] ?? 85;
+    const attack = activeAttacks[node.address] || 'Healthy';
+    const status = attack !== 'Healthy' && attack !== 'Normal' ? attack
+      : score >= 80 ? 'Healthy' : score >= 60 ? 'Suspicious' : score >= 30 ? 'Malicious' : 'Isolated';
+    return {
+      nodeId: node.address,
+      address: node.address,
+      type: node.type === 'iot' ? 'IoT Device'
+          : node.type === 'edge' ? 'Edge Node'
+          : node.type === 'base_station' ? 'Base Station'
+          : 'IoT Device',
+      role: node.role,
+      trustScore: parseFloat((score / 100).toFixed(3)),
+      status,
+      senderAddress: node.address,
+      receiverAddress: node.address,
+      createdAt: new Date().toISOString(),
+    };
+  });
+  res.json({ nodes: nodesWithScores });
+});
+
+// GET /api/nodes/:addr — single node detail
+app.get('/api/nodes/:addr', (req, res) => {
+  const { addr } = req.params;
+  const node = MOCK_NODES.find(n => n.address === addr);
+  if (!node) return res.status(404).json({ error: 'Node not found' });
+  const score = trustScores[addr] ?? 85;
+  const attack = activeAttacks[addr] || 'Healthy';
+  const status = attack !== 'Healthy' && attack !== 'Normal' ? attack
+    : score >= 80 ? 'Healthy' : score >= 60 ? 'Suspicious' : score >= 30 ? 'Malicious' : 'Isolated';
+  res.json({
+    nodeId: addr, address: addr,
+    type: node.type, role: node.role,
+    trustScore: score, status,
+    senderAddress: addr, receiverAddress: addr,
+    createdAt: new Date().toISOString(),
+  });
+});
+
+// POST: Isolate a node
+app.post('/api/nodes/:addr/isolate', (req, res) => {
+  const { addr } = req.params;
+  if (!MOCK_NODES.find(n => n.address === addr)) return res.status(404).json({ error: 'Node not found' });
+  trustScores[addr] = 0;
+  activeAttacks[addr] = 'Isolated';
+  ledgerService.recordEvent(addr, 0, 'Node Isolated');
+  io.emit('trust_update', { node: addr, trustScore: 0, isMaliciousMode: maliciousMode });
+  io.emit('node_action', { addr, action: 'isolated', trustScore: 0, timestamp: Date.now() });
+  res.json({ success: true, addr, action: 'isolated', trustScore: 0 });
+});
+
+// POST: Restore a node
+app.post('/api/nodes/:addr/restore', (req, res) => {
+  const { addr } = req.params;
+  if (!MOCK_NODES.find(n => n.address === addr)) return res.status(404).json({ error: 'Node not found' });
+  trustScores[addr] = 100;
+  activeAttacks[addr] = 'Healthy';
+  ledgerService.recordEvent(addr, 100, 'Node Restored', 'Normal');
+  io.emit('trust_update', { node: addr, trustScore: 100, isMaliciousMode: maliciousMode });
+  io.emit('node_action', { addr, action: 'restored', trustScore: 100, timestamp: Date.now() });
+  res.json({ success: true, addr, action: 'restored', trustScore: 100 });
+});
+
+// POST: Set trust score
+app.post('/api/nodes/:addr/trust', (req, res) => {
+  const { addr } = req.params;
+  const { score } = req.body;
+  if (!MOCK_NODES.find(n => n.address === addr)) return res.status(404).json({ error: 'Node not found' });
+  const clamped = Math.max(0, Math.min(100, Number(score)));
+  if (isNaN(clamped)) return res.status(400).json({ error: 'Invalid score' });
+  trustScores[addr] = clamped;
+  ledgerService.recordEvent(addr, clamped, 'Trust Score Updated');
+  io.emit('trust_update', { node: addr, trustScore: clamped, isMaliciousMode: maliciousMode });
+  io.emit('node_action', { addr, action: 'trust_updated', trustScore: clamped, timestamp: Date.now() });
+  res.json({ success: true, addr, action: 'trust_updated', trustScore: clamped });
+});
+
+// GET /api/trust-scores — normalised 0-1 scores for all nodes
+app.get('/api/trust-scores', (req, res) => {
+  const result = MOCK_NODES.map(node => {
+    const rawScore = trustScores[node.address] ?? 85;
+    const normalized = rawScore / 100;
+    const status = normalized > 0.8 ? 'trusted' : normalized >= 0.6 ? 'suspicious' : 'malicious';
+    return {
+      nodeId: node.address,
+      address: node.address,
+      trustScore: parseFloat(normalized.toFixed(3)),
+      role: node.role,
+      status,
+    };
+  });
+  res.json(result);
+});
+
+// GET /api/trust-scores/history
+app.get('/api/trust-scores/history', (req, res) => {
+  res.json(simulationState.getTrustHistory());
+});
+
+// GET /api/trust/:nodeAddr — single node trust
+app.get('/api/trust/:nodeAddr', (req, res) => {
+  const { nodeAddr } = req.params;
+  const score = trustScores[nodeAddr] ?? 85;
+  res.json({ trustScore: score, predictedNextScore: Math.min(100, score + (Math.random() * 6 - 1)) });
+});
+
+// GET /api/health
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'healthy', simulator: 'running', nodeCount: MOCK_NODES.length, maliciousMode });
+});
 
 app.get('/api/attacks', (req, res) => {
   const { severity, type, limit = 50 } = req.query;
